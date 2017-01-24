@@ -1,0 +1,212 @@
+.\" Process this file with
+.\" groff -man -Tascii bam-rmdup.1
+.\"
+.TH FASTQ2BAM 1 "OCTOBER 2014" Applications "User Manuals"
+.SH NAME
+fastq2bam \- convert fastq files to bam
+.SH SYNOPSIS
+.B fastq2bam [
+.I option
+.B ... ]
+.SH DESCRIPTION
+.B fastq2bam
+takes FastQ or FastA files as input and converts them to BAM, honoring
+various common conventions.  Paired end and singly or doubly indexed
+reads are supported in most encodings encountered in the wild.
+
+Most syntactic conventions employed in FastQ are recognized, see below.
+Multiple files can be given as input, they are combined sensibly and
+finally concatenated.  Bare file arguments behave the same as if they
+were given with the 
+.I --read-one
+option.
+
+
+.SH OPTIONS
+.IP "-o, --output file"
+Send output to
+.I file
+instead of standard output.  Absent
+.IR -o ,
+uncompressed BAM is piped to stdout.
+
+.IP "-1, --read-one file"
+Read 
+.I file
+and turn each contained sequence into a BAM record.  
+.I file
+may contain an arbitrary mix of paired and unpaired reads, first and
+second mates, and so on.
+
+.IP "-2, --read-two file"
+Read
+.I file
+and interpret the contents as second mates of read pairs.  Each read is
+paired up with one from the source previously given with
+.I --read-one
+(or stdin if no
+.I --read-one
+was encountered), and the pair is appropriately flagged a 1st mate and
+2nd mate.
+
+.IP "-I, --index-one file"
+Read 
+.I file
+and interpret the contents as the first index sequence, which is
+combined with reads from the source previously given with
+.I --read-one
+(or stdin if no
+.I --read-one
+was encountered).  
+
+.IP "-J, --index-two file"
+Read 
+.I file
+and interpret the contents as the second index sequence, which is
+combined with reads from the source previously given with
+.I --read-one
+(or stdin if no
+.I --read-one
+was encountered).
+
+.IP "-m, -merge-overlap[=QUAL]"
+Attempt to merge or trim reads.  The optional quality is the cutoff at
+which a merge/trim result is considered guaranteed correct and the
+original read or read pair is discarded.
+
+.IP "-q, --merge-qual QUAL"
+Sets the quality below which merging is considered pointless.  A
+merge/trim result with a lower quality is immediately discarded.
+
+.IP "-v, --verbose"
+Causes
+.I fastq2bam 
+to print a progress report to stderr.
+
+.SH INPUT FILES
+
+Input files can be FastQ or FastA, even a mix of the two,
+optionally compressed using either
+.IR gzip "(1) or " bgzip "(1)."
+If the input is FastA, the output will not have quality scores
+associated with the sequences, but nothing else changes.  Many
+annotations in the header are recognized:
+
+.IP \(bu 4 
+A name suffix of "/1" or "/2" is turned into the first mate or second
+mate flag, respectively (Illumina convention).
+
+.IP \(bu 4
+The name prefixes "F_" and "R_" are turned into the first mate or
+second mate flag, respectively (legacy MPI EVAN convention).
+
+.IP \(bu 4
+The name prefix "M_" flags the sequence as unpaired and merged (legacy
+MPI EVAN convention).
+
+.IP \(bu 4 
+The name prefix "T_" flags the sequence as unpaired and trimmed
+(legacy MPI EVAN convention).
+
+.IP \(bu 4
+The name prefix of "C_", either before or after any of the other
+prefixes, is turned into the extra flag 
+.IR XP:i:-1 ,
+meaning the result of duplicate removal with unknown duplicate count
+(legacy MPI EVAN convention, I'm really sorry for this one).
+
+.IP \(bu 4
+A nucleotide sequence separated from the name by an octothorpe ("#") is
+removed and treated as the first index.  Two such sequences, separated
+by a comma, are treated as first and second index (legacy convention,
+possibly MPI EVAN only).
+
+.IP \(bu 4
+If the first word of the description has at least four colon separated
+subfields, the first is used to flag first/second mate if it has the
+value 
+.IR 1 or 2 ,
+respectively, the second is interpreted as the "QC failed" flag if it
+has the value
+.IR Y ,
+, and the fourth is used as the first index sequence.
+
+If multiple files are read and combined, later files override the
+appropriate values parsed from earlier files.  This makes it possible
+to, e.g. have one file containing the first mates with their index
+sequences, another with the second mates with their index sequences, and
+a third file that supplies the second index sequence only.
+
+
+.SH OUTPUT FILES
+
+Output is BAM.  Most information is encoded in the standard fields and
+flags.  In addition, the first index sequence is placed into the 
+.I XI
+field with string type, its quality score into the 
+.I YI
+field with string type, encoded just like in FastQ files.
+Likewise, the second index goes into
+.IR XJ and YJ .
+If a read is recognized as being a replacement for a cluster of
+duplicates, this is encoded by setting
+.I XP
+to
+.I -1 
+with integer type.  If a read is to be flagged as trimmed, the 
+.I FF
+field is set to
+.I 1
+, or to 
+.I 2
+if the read resulted from merging of a read pair (MPI EVAN convention).
+
+.SH NOTES
+
+Whenever multiple files are to be combined, they must run parallel, that
+is, each file must contain sequences with the same read names in the
+same order.
+
+If only a
+.I --read-one
+argument is combined with one or two index files, the normal parsing
+logic applies, so a mix of paired and unpaired reads, even with indices
+is allowed.  The index sequences are overridden with those from the
+separate input files.
+
+If one 
+.I --read-one
+argument is combined with one
+.I --read-two
+argument, the pairing flags are forced.  While the normal parsing logic
+still applies, a mix of paired and unpaired reads will not work as
+desired and will probably lead to errors.
+
+.SH MERGING
+
+Merging of read pairs and trimming of single reads are considered
+effectively the same.  Only few adapters occur in the wild, and we try
+to trim any combination of these:
+.IR "Genomic-R1" ", " "Genomic-R2" ", " "CL72" ", " "Multiplex-R2" ", " "Graft-P7" "."
+Merging computes two qualities and stores them in
+the bam record:  "YM" (that's Merge quality) is the odds that the merge
+is wrong, "YN" (that's aNother merge quality) is the odds that any
+possible merge is wrong, both are encoded on the Phred scale.
+
+If YM is too low (less than 20, configurable with --merge-qual), nothing
+is merged and the original read pair is retained.  If YM is very high
+(higher that 200, configurable with --merge-overlap), the original pair
+is discarded.  (At this quality, the program isn't expected to make a
+single mistake in a lifetime of sequecing.)  Otherwise, the read is
+merged and the original pair is retained.
+
+Modifications are logged in the "FF" field (that's Freaking Flags):  The
+value is 1 for a trimmed read, 3 for a merged read, and 4 for the
+original of a read that is also present in a merged or trimmed version.
+
+.SH AUTHOR
+Udo Stenzel <udo_stenzel@eva.mpg.de>
+
+.SH "SEE ALSO"
+.BR biohazard (7)
+

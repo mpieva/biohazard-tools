@@ -1,0 +1,137 @@
+Name:                biohazard-tools
+Version:             0.1
+Synopsis:            bioinformatics tools that work with bam files
+Description:         A number of command line tools for manipulating bam
+                     files.
+Category:            Bioinformatics
+
+Homepage:            https://bitbucket.org/ustenzel/biohazard-tools
+License:             BSD3
+License-File:        LICENSE
+
+Author:              Udo Stenzel
+Maintainer:          udo.stenzel@eva.mpg.de
+Copyright:           (C) 2010-2017 Udo Stenzel
+
+Extra-Source-Files:  man/man1/bam-fixpair.1
+                     man/man1/bam-meld.1
+                     man/man1/bam-rewrap.1
+                     man/man1/bam-rmdup.1
+                     man/man1/fastq2bam.1
+
+Data-Files:          index_db.json
+Data-Dir:            data
+
+Cabal-version:       >= 1.10
+Build-type:          Custom
+Tested-With:         GHC == 7.8.4, GHC == 7.10.1, GHC == 8.0.1
+
+source-repository head
+  type:     git
+  location: https://bitbucket.org/ustenzel/biohazard-tools.git
+
+
+Executable bam-fixpair
+  Main-is:             bam-fixpair.hs
+  Ghc-options:         -Wall -rtsopts
+  -- Ghc-options:         -Wall -threaded -rtsopts -with-rtsopts=-N
+  Default-Language:    Haskell2010
+  Default-Extensions:  NoImplicitPrelude, OverloadedStrings,
+                       BangPatterns, RecordWildCards, FlexibleContexts
+  Hs-Source-Dirs:      src
+  Other-modules:       Paths_biohazard_tools
+  Build-depends:       async,
+                       base,
+                       binary,
+                       biohazard >= 0.6.10 && < 0.7,
+                       bytestring,
+                       process,
+                       stm,
+                       transformers,
+                       unix,
+                       vector
+
+Executable bam-meld
+  Main-is:             bam-meld.hs
+  Ghc-options:         -Wall -rtsopts
+  -- Ghc-options:         -Wall -threaded -rtsopts -with-rtsopts=-N
+  Default-Language:    Haskell2010
+  Default-Extensions:  NoImplicitPrelude, OverloadedStrings,
+                       BangPatterns, FlexibleContexts
+  Hs-Source-Dirs:      src
+  Other-modules:       Paths_biohazard_tools
+  Build-depends:       base,
+                       biohazard >= 0.6.10 && < 0.7,
+                       bytestring,
+                       containers
+
+Executable bam-resample
+  Main-is:             bam-resample.hs
+  Ghc-options:         -Wall -rtsopts
+  -- Ghc-options:         -Wall -threaded -rtsopts -with-rtsopts=-N
+  Default-Language:    Haskell2010
+  Default-Extensions:  NoImplicitPrelude, OverloadedStrings, BangPatterns
+  Hs-Source-Dirs:      src
+  Other-modules:       Paths_biohazard_tools
+  Build-depends:       base,
+                       biohazard >= 0.6.10 && < 0.7,
+                       bytestring,
+                       random
+
+Executable bam-rewrap
+  Main-is:             bam-rewrap.hs
+  Ghc-options:         -Wall -rtsopts
+  -- Ghc-options:         -Wall -threaded -rtsopts -with-rtsopts=-N
+  Default-Language:    Haskell2010
+  Default-Extensions:  NoImplicitPrelude, OverloadedStrings, BangPatterns
+  Hs-Source-Dirs:      src
+  Other-modules:       Paths_biohazard_tools
+  Build-depends:       base,
+                       biohazard >= 0.6.10 && < 0.7,
+                       bytestring,
+                       containers
+
+Executable bam-rmdup
+  Main-is:             bam-rmdup.hs
+  Ghc-options:         -Wall -rtsopts
+  -- Ghc-options:         -Wall -threaded -rtsopts -with-rtsopts=-N
+  Default-Language:    Haskell2010
+  Default-Extensions:  NoImplicitPrelude, OverloadedStrings,
+                       BangPatterns, RecordWildCards, FlexibleContexts
+  Hs-Source-Dirs:      src
+  Other-modules:       Paths_biohazard_tools
+  Build-depends:       base,
+                       biohazard >= 0.6.10 && < 0.7,
+                       bytestring,
+                       containers,
+                       -- primitive,
+                       unordered-containers,
+                       vector
+
+Executable bam-trim
+  Main-is:             bam-trim.hs
+  Ghc-options:         -Wall -rtsopts
+  -- Ghc-options:         -Wall -threaded -rtsopts -with-rtsopts=-N
+  Default-Language:    Haskell2010
+  Default-Extensions:  NoImplicitPrelude, OverloadedStrings, BangPatterns
+  Hs-Source-Dirs:      src
+  Other-modules:       Paths_biohazard_tools
+  Build-depends:       base,
+                       biohazard >= 0.6.10 && < 0.7,
+                       bytestring
+
+Executable fastq2bam
+  Main-is:             fastq2bam.hs
+  Ghc-options:         -Wall -rtsopts
+  -- Ghc-options:         -Wall -threaded -rtsopts -with-rtsopts=-N
+  Default-Language:    Haskell2010
+  Default-Extensions:  NoImplicitPrelude, OverloadedStrings, BangPatterns
+  Hs-Source-Dirs:      src
+  Other-modules:       Paths_biohazard_tools
+  Build-depends:       base,
+                       biohazard >= 0.6.10 && < 0.7,
+                       bytestring,
+                       containers,
+                       vector
+
+-- :vim:tw=132:

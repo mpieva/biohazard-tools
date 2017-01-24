@@ -1,0 +1,238 @@
+.\" Process this file with
+.\" groff -man -Tascii bam-rmdup.1
+.\"
+.TH BAM-RMDUP 1 "DECEMBER 2012" Applications "User Manuals"
+.SH NAME
+bam-rmdup \- remove PCR duplicates from BAM files
+.SH SYNOPSIS
+.B bam-rmdup [
+.I option
+.B |
+.I file
+.B ... ]
+.SH DESCRIPTION
+.B bam-rmdup
+searches for PCR duplicates in BAM files.  From each set of duplicates,
+a consensus is formed, which replaces the whole set.  Input files must
+be sorted by coordinate, all inputs will be merged into a single sorted
+output file.  Finally, a summary of the number of removed duplicates and
+and estimate of library complexity is printed to standard output.
+
+.SH OPTIONS
+.IP "-o, --output file"
+Send BAM output to
+.IR file .
+The default is to produce no output and count duplicates only.  If 
+.I file
+is '-', BAM output is sent to stdout and the final tally is instead sent
+to stderr.
+
+.IP "-O, --output-lib pat"
+Split output by library (see notes below) and write each into a file
+with the name created from 
+.IR pat .
+If 
+.I pat
+contains the characters
+.IR '%s' ,
+they will be replaced by the name of the library.  Note that there can
+be reads assigned to no read group, these will have the empty string
+substituted.  The characters
+.IR '%%'
+will be replaced by a single percent sign.
+
+.IP "-R, --refseq REF"
+Specify which parts of the input to read.  Selective reading requires an
+index file for the input.  It allows separate processing of individual
+reference sequences and hence parallelization.  If
+.IR REF " is " A ,
+the whole input is processed, which is the default.  If
+.I REF
+is a number, only alignments to one reference sequence are processed.
+If
+.IR REF " is " X-Y ", where " X " and " Y
+are numbers, alignments to reference sequences numbered 
+.IR X " through " Y
+are processed.  Reference sequences are numbered starting from
+.IR 1 ,
+asking for references that do not exist results in no error, but an
+empty output file.  If
+.IR REF " is " U ,
+only reads with invalid reference sequence (unaligned reads at the end
+of the file) are processed.  This only makes sense to simulate the
+effect of 
+.IR --unaligned ,
+therefore 
+.IR "--refseq U" " implies " --unaligned .
+
+.IP "-z, --circular CHR:LEN"
+Specify that the reference sequence starting with the string
+.I CHR
+is circular and has length 
+.IR LEN .
+
+The effect is that reads that align to one or more position that is
+duplicated in the reference are normalized to a small start coordinate
+and have their mapping quality (MAPQ) fixed where possible.  After removal of
+duplicates, reads that overhang the end of the reference sequence are
+duplicated to the beginning and invalid parts of the alignment are
+masked.  The correct length is also entered in the BAM header.
+
+Assuming that reads were mapped to a reference that has a part from the
+beginning pasted to its end, a subsequent genotype caller should now see
+even coverage over the whole length of the reference.  At the same time,
+duplicate removal and complexity estimation should still work fine.
+(Arguably, this is all way too complicated, but simple solutions seem
+unattainable within the constraints of the BAM file format.)
+
+.IP "-p, --improper-pairs"
+Retain improper pairs, that is, mate-pairs of which only one mate is
+mapped.  These are discarded by default.
+
+.IP "-u, --unaligned"
+Retain unaligned reads and completely unaligned pairs.  This amounts to
+a simple copy operation at the end and may only be sensible in
+conjunction with 
+.I --keep 
+if the output file is intended to replace the input file without loss of
+any data.
+
+.IP "-1, --single-read"
+Treat all reads as single.  This might be a workaround for a very bad
+second read, but is generally considered a bad idea.  Reads will no
+longer be marked as "paired" after running with this setting.
+
+.IP "-c, --cheap"
+Run in cheap mode.  Cheap mode does not compute a consensus sequence for
+a cluster of duplicates, but selects one of the reads as representative.
+Its advantage is that it runs faster.  Cheap mode is the default if no
+output file is specified, else a consensus is computed by default.
+
+.IP "-k, --keep, --mark-only"
+Keep duplicates and mark them as such.  Setting this option has the
+effect that all reads that would have been discarded during duplicate
+removal are instead retained and marked as duplicates.
+
+Note that 
+.I --keep
+does not affect the operation of the filter settings!  It may make sense
+to combine 
+.I --keep 
+with 
+.IR --improper-pairs ,
+it may not make sense to combine it with
+.IR --min-length .
+
+.IP "-Q, --max-qual qual"
+Set the maximum quality score after consensus calling to
+.I qual.
+Consensus calling can result in unrealistically high quality scores due
+to effects outside this program's scope (presumably errors in PCR).
+Quality score are therefore limited to an upper value, even if we didn't
+actually remove any duplicates.  The default is 60, corresponding to a
+very high fidelity polymerase.
+
+.IP "-l, --min-length len"
+Discard reads shorter than
+.IR len .
+This option may conserve time if the plan is to discard short reads
+later anyway.
+
+.IP "-q, --min-mapq qual"
+Discard reads with a map quality (MAPQ) lower than 
+.IR qual .
+If the
+.IR --circular 
+option is in use, the filter is applied after reads have been wrapped
+and their map quality has been corrected.  This option may conserve time
+if the plan is to discard short reads later anyway.  
+
+.IP "-s, --no-strand"
+Treat the strand information as uninformative.  Normally, PCR duplicates
+should always map to the same strand, however, in certain types of
+library (e.g. Illumina fork adapter preparation) the two strands of the
+same original molecule map to different strands.  With the
+.I --no-strand
+option, these are considered duplicates, without it, they are distinct.
+
+.IP "-r, --ignore-rg"
+Ignore read groups.  Normally, no duplicates are expected across
+different libraries, and this information is gleaned from the read group
+headers.  With
+.IR --ignore-rg ,
+everything is treated as a single read group with duplicates potentially
+everywhere.
+
+.SH THEORY OF OPERATION
+
+.SS Filtering Of Input
+
+In normal operation, unaligned single reads and completely unaligned
+pairs, half-aligned pairs, and duplicate reads are discarded.  The
+rationale is that these will usually be dropped later anyway.  If this
+loss of information is undesirable, 
+.I --improper-pairs
+retains half-aligned pairs and includes them in the duplicate removal
+process, 
+.I --unaligned
+includes unaligned single reads and completely unaligned read pairs in
+the output, and
+.I --keep
+keeps duplicates and marks them as such.  In summary, running with
+.I -p -u -k 
+and without any of
+.I -1 -l
+should retain all information from the original file.
+
+.SS Definition of Duplicates
+
+To find duplicates, reads are grouped into sets of equal alignment
+coordinate, equal library, and equal strand.  Alignment coordinate means
+the 5' coordinate and length for merged reads, the two leftmost
+coordinates for read pairs, and just the leftmost coordinate for single
+ended reads, the library is the one defined for the read group else the
+sample specified for the read group, else the read group, else the empty
+string,  The assumption here is that different libraries cannot contain
+libraries.  This works best if the RG-LB field specifies the
+"ur-library" before amplification.
+
+The choice of what constitutes a duplicate is made such that a read pair
+can be dealt with using only the information available at one mate's
+site (
+.IR POS , MPOS and FLAG
+in BAM files).  This way,
+.B bam-rmdup
+can stream a file with no additional sorting pass, and it can be
+parallized over target sequences.
+
+For each set, a consensus is called by first determining the most common
+CIGAR line and then calling the consensus of all reads that match the
+CIGAR line.  Note that this means reads with a different CIGAR line are
+effectively discarded, but that also makes dealing with indels rather
+easy.  Quality scores are afterwards limited to a sensible maximum.  
+
+.SS Mixed Data
+
+In principle, BAM files can contain a mix of paired end data, single
+ended data, merges pairs, and half discarded pairs.  The latter is
+invalid, but surprisingly common in practice.  We try to deal with the
+mess as best as we can.  The biggest difficulty arises from a mix of
+single ended and paired reads, because it is is possible that a single
+ended reads looks like a duplicate of two sets of pairs that are clearly
+not duplicates of each other.
+
+.B bam-rmdup
+solved this problem by treating single ended and paired data mostly
+separately.  If a set of single ended reads could be a duplicate of at
+least one set of paired end, the singles are removed or marked, but they
+are not included into any consensus.
+
+.SH BUGS
+It's way too slow.
+
+.SH AUTHOR
+Udo Stenzel <udo_stenzel@eva.mpg.de>
+
+.SH "SEE ALSO"
+.BR biohazard (7)
+

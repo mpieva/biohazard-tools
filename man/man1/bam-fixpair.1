@@ -1,0 +1,152 @@
+.\" Process this file with
+.\" groff -man -Tascii bam-rmdup.1
+.\"
+.TH BAM-FIXPAIR 1 "OCTOBER 2016" Applications "User Manuals"
+.SH NAME
+bam-fixpair \- bring read pairs together an repair them
+.SH SYNOPSIS
+
+.B bam-fixpair [
+.I option
+.B |
+.I file
+.B ... ]
+
+.B bam-fixpair [
+.I option
+.B |
+.I file
+.B ... ] --exec [program] CLOWNS MIDDLE JOKERS
+
+.SH DESCRIPTION
+.B bam-fixpair
+reads one or more BAM files, brings the paired end reads together, fixes
+any flags as needed, and writes the result out in BAM format again or
+pipes(!) it into another program that expects two(!) FastQ files as input.
+
+.B bam-fixpair
+should work with any input, but it performs best on sorted BAM input
+that hasn't been filtered in a way to make it internally inconsistent.
+Performance on inconsistent BAM files suffers, but the output will
+always be an internally consistent file.  Output is never sorted, but
+the two mates of a pair appear next to each other.
+
+.SH OPTIONS
+
+.IP "-o, --output file"
+Send BAM output to
+.IR file .
+The default is to pipe uncompressed BAM to stdout.
+
+.IP "-X, --exec"
+Pipe two streams in FastQ format to a program.  This option ends the
+command line for 
+.B bam-fixpair
+and is followed by the command line of a program to execute.  The
+command line shall contain the literal words
+.IR CLOWNS ", " MIDDLE " and " JOKERS
+up to once each.  If present, these will be replaced with file names
+that refer to pipes such that reading from
+.I CLOWNS
+yields the first mates,
+.I JOKERS
+yields the second mates of each read pair in the same order and
+.I MIDDLE
+yields the unpaired reads.  To avoid leaking memory, the executed
+program should read from all these file descriptors in an interleaved
+fashion.  When done,
+.B bam-fixpair
+exists with the exit code of the external program. 
+
+.IP "-n, --dry-run, --validate"
+Turns off output.  Any errors or inconsistencies found by
+.B bam-fixpair
+will still be reported, so it serves to validate a BAM file.
+
+.IP "-k, --kill-widows"
+Delete reads that lost their mate.  Widows typically result from well
+intended filters that deal improperly with paired end data.
+
+.IP "-u, --kill-unmapped"
+Delete unmapped reads that lost their mate.  The retained widows are
+flagged as unpaired to make the output valid.
+
+.IP "--kill-none"
+Do not delete reads that lost their mate.  They are flagged as unpaired
+to make the output valid.  This is the default.
+
+.IP "-v, --verbose"
+Print all informational messages.  This is potentially very noisy.
+
+.IP "-w, --warnings"
+Print warnings and errors.  Warnings are emitted for minor
+inconveniences like mismatches flags, errors are emitted for outright
+mistakes like missing reads.  This would be a good setting when
+combined with
+.IR "--validate" .
+
+.IP "--errors"
+Print only errors.  Errors are emitted for outright mistakes like
+missing reads.  This is the default setting.
+
+.IP "-q, --quiet"
+Print only fatal errors that prevent program continuation.  Use this if
+you don't care about how badly mutilated the file is, and just want to
+feed it into some program somehow.
+
+.IP "--report-mrnm, --no-report-mrnm"
+Report / don't report mismatched mate reference names.  Defaults to yes.
+
+.IP "--report-mpos, --no-report-mpos"
+Report / don't report mismatches mate position.  Defaults to yes.
+
+.IP "--report-isize, --no-report-isize"
+Report / don't report wrong insert size.  Slighly miscalculate insert
+sizes are surprisingly common, so this defaults to no.
+
+.IP "--report-flags, --no-report-flags"
+Report / don't report mismatched flags.  Defaults to yes.
+
+.IP "--report-fflag, --no-report-fflag"
+Report / don't report mismatched flags that are commonly inconsistent.
+This applies to flags that are so often mishandled by common software
+that they are more or less expected to be inconsistent, therefore it
+defaults to no.
+
+.IP "--report-ixs, --no-report-ixs"
+Report / don't report mismatched index information.  Defaults to yes.
+
+.IP "--only-mapped"
+Drop completely unmapped input.  Single reads are retained in the output
+if and only if they are mapped, paired reads are retained if and only if 
+.I at least one
+of the two mates in a pair is mapped.  This results in consistent
+output, while the attempt to achieve the same by calling
+.B samtools view -F4
+results in an inconsistent output.
+
+.IP "--fix-sven QUAL"
+Trim the longest suffix off each read that has an average quality below
+.IR QUAL .
+If that causes a read to vanish, it is removed and leaves a widow, which
+is then either flagged correctly or killed, depending on the setting
+mentioned above.  This option is a bad idea, don't use it.
+
+.IP "-h, -?, --help, --usage"
+Prints a short usage information and exit.
+
+.IP "-V, --version"
+Prints the version number and exits.
+
+.SH BUGS
+For large and badly messed up inputs, 
+.B bam-fixpair
+will run out of memory.  A possible fix would be to buffer in external
+memory, and that is planned, but hasn't been done.
+
+.SH AUTHOR
+Udo Stenzel <udo_stenzel@eva.mpg.de>
+
+.SH "SEE ALSO"
+.BR biohazard (7)
+

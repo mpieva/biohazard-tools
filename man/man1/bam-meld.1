@@ -1,0 +1,86 @@
+.\" Process this file with
+.\" groff -man -Tascii bam-rmdup.1
+.\"
+.TH BAM-MELD 1 "DECEMBER 2012" Applications "User Manuals"
+.SH NAME
+bam-meld \- meld BAM files together, keeping best alignments
+.SH SYNOPSIS
+.B bam-meld [
+.I option
+.B |
+.I file
+.B ... ]
+.SH DESCRIPTION
+.B bam-meld
+takes multiple BAM files as input and melds them into one by keeping the
+best alignment for each read.  Inputs must be in the same order with
+mate pairs sorted together.  One way to achieve that is to sort by query
+name, another is to keep files in their original order.
+
+
+.SH OPTIONS
+.IP "-o, --output file"
+Send output to
+.I file
+instead of standard output.
+
+.IP "-s, --sorted"
+Tells
+.I bam-meld
+that the input files are sorted by query name.  They will be merged, and
+all the records found for a given read are melded into one.  This works
+even if a particular read is missing from some, but not all input files.
+
+.IP "-u, --unsorted"
+Tells
+.I bam-meld
+the the input is unsorted.  It is assumed to be grouped by query name
+and all input files must have strictly the same order with no records
+missing from any file.
+
+.IP "-w, --weight XX:Y"
+Sets the weight for the badness of field
+.I XX
+to value 
+.I Y.
+The values of all fields (with integer or floating type) are multiplied
+by their weight and summed up to obtain the badness of an alignment.
+The alignment with the lowest badness is chosen as the best, the
+difference in badness between the two best alignments becomes a new
+upper limit on the mapping quality.
+
+.IP "--bwa"
+Sets a badness scheme suitable for programs that fill in the 
+.IR XM ", " XO ", and " XG
+fields, e.g.
+.I bwa aln.
+
+.IP "--anfo"
+Sets a badness scheme suitable for programs that fill in the 
+.IR UQ " and " PQ
+fields, e.g.
+.I anfo.
+
+.IP "--blast"
+Sets a badness scheme suitable for programs that fill in the 
+.I AS
+field, e.g.
+.I bwa bwasw
+and presumably the
+.I blast
+family.
+
+.IP "--blat"
+Sets a badness scheme suitable for programs that fill in the 
+.I NM
+field, which would be appropriate for 
+.I blat
+style programs.
+
+
+.SH AUTHOR
+Udo Stenzel <udo_stenzel@eva.mpg.de>
+
+.SH "SEE ALSO"
+.BR biohazard (7)
+

@@ -1,0 +1,56 @@
+.\" Process this file with
+.\" groff -man -Tascii bam-rmdup.1
+.\"
+.TH BAM-REWRAP 1 "SEPTEMBER 2013" Applications "User Manuals"
+.SH NAME
+bam-rewrap \- rewrap alignments in BAM file to real target length
+.SH SYNOPSIS
+.BI "bam-rewrap [" chrom : length " ...]"
+
+.SH DESCRIPTION
+.B bam-rewrap
+reads a BAM file from standard input and writes a BAM file to standard
+output where every alignment to a subset of target sequences has been
+wrapped to the targets actual length, obtained from the command line.
+
+The idea is that a circular reference sequence has been extended
+artificially to facilitate alignment.  Now the declared length in the
+header is wrong, and some alignments overhang the end. 
+.B bam-rewrap
+splits
+those alignments into two, one for the beginning, one for the end of
+the sequence, then soft-masks out the inappropriate parts.  Alignments
+falling completely behind the actual end of the target sequence are
+wrapped to natural coordinates.
+
+.B bam-rewrap
+tries to fix the map quality (MAPQ) for the affected reads as follows:  if
+a read has zero map quality, meaning multiple equally good hits, 
+.B bam-rewrap
+checks the 
+.I XA
+field.  If it reports exactly one additional alignment,
+and it matches the primary alignment when transformed to natural
+coordinates, 
+.I XA 
+is removed and 
+.I MAPQ
+set to 37, indicating a unique hit.  This logic is not standardized and
+is only known to work if alignments were produced by
+.BR bwa .
+It may or may not make sense for other aligners.
+ 
+.SH OPTIONS
+.IP "chrom:length"
+Indicates that the length of target sequence
+.IR chrom " is " length .
+This option can be repeated and each will cause alignments to the
+specified target to be wrapped.  A unique prefix of the sequence name is
+sufficient.
+
+.SH AUTHOR
+Udo Stenzel <udo_stenzel@eva.mpg.de>
+
+.SH "SEE ALSO"
+.BR biohazard (7)
+
