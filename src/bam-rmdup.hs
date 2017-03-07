@@ -391,7 +391,7 @@ mapSortAtGroups m f = eneeCheckIfDonePass no_group
 
 
 collect :: MonadIO m => Iteratee [BamRec] m [Bytes]
-collect = mapChunks (foldMap pushBam) ><> encodeBgzfWith 1 =$ liftI (chunksToList [])
+collect = mapChunks (foldMap (Endo . pushBam)) ><> encodeBgzf 1 =$ liftI (chunksToList [])
   where
     chunksToList acc (Chunk x) = y `seq` liftI (chunksToList (y:acc)) where y = S.copy x
     chunksToList acc (EOF  mx) = idone (reverse acc) (EOF mx)
