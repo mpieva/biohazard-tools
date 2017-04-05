@@ -31,9 +31,26 @@ source-repository head
   location: https://bitbucket.org/ustenzel/biohazard-tools.git
 
 
+Executable bam-mangle
+  Main-is:             bam-mangle.hs
+  Ghc-options:         -Wall -rtsopts -optl-static -optl-pthread
+  -- Ghc-options:         -Wall -threaded -rtsopts -with-rtsopts=-N
+  Default-Language:    Haskell2010
+  Default-Extensions:  NoImplicitPrelude, OverloadedStrings, BangPatterns
+  Hs-Source-Dirs:      src
+  Other-modules:       Paths_biohazard_tools
+  Build-depends:       attoparsec               >= 0.10 && < 0.14,
+                       base                     >= 4.6 && < 4.10,
+                       biohazard                >= 0.6.13 && < 0.7,
+                       bytestring               >= 0.10.2 && < 0.11,
+                       random                   >= 1.0 && < 1.2,
+                       unordered-containers     >= 0.2.3 && < 0.3,
+                       vector                   == 0.11.*
+
+
 Executable bam-fixpair
   Main-is:             bam-fixpair.hs
-  Ghc-options:         -Wall -rtsopts
+  Ghc-options:         -Wall -rtsopts -optl-static -optl-pthread
   -- Ghc-options:         -Wall -threaded -rtsopts -with-rtsopts=-N
   Default-Language:    Haskell2010
   Default-Extensions:  NoImplicitPrelude, OverloadedStrings,
@@ -53,7 +70,7 @@ Executable bam-fixpair
 
 Executable bam-meld
   Main-is:             bam-meld.hs
-  Ghc-options:         -Wall -rtsopts
+  Ghc-options:         -Wall -rtsopts -optl-static -optl-pthread
   -- Ghc-options:         -Wall -threaded -rtsopts -with-rtsopts=-N
   Default-Language:    Haskell2010
   Default-Extensions:  NoImplicitPrelude, OverloadedStrings,
@@ -67,7 +84,7 @@ Executable bam-meld
 
 Executable bam-resample
   Main-is:             bam-resample.hs
-  Ghc-options:         -Wall -rtsopts
+  Ghc-options:         -Wall -rtsopts -optl-static -optl-pthread
   -- Ghc-options:         -Wall -threaded -rtsopts -with-rtsopts=-N
   Default-Language:    Haskell2010
   Default-Extensions:  NoImplicitPrelude, OverloadedStrings, BangPatterns
@@ -80,7 +97,7 @@ Executable bam-resample
 
 Executable bam-rewrap
   Main-is:             bam-rewrap.hs
-  Ghc-options:         -Wall -rtsopts
+  Ghc-options:         -Wall -rtsopts -optl-static -optl-pthread
   -- Ghc-options:         -Wall -threaded -rtsopts -with-rtsopts=-N
   Default-Language:    Haskell2010
   Default-Extensions:  NoImplicitPrelude, OverloadedStrings, BangPatterns
@@ -93,7 +110,7 @@ Executable bam-rewrap
 
 Executable bam-rmdup
   Main-is:             bam-rmdup.hs
-  Ghc-options:         -Wall -rtsopts
+  Ghc-options:         -Wall -rtsopts -optl-static -optl-pthread
   -- Ghc-options:         -Wall -threaded -rtsopts -with-rtsopts=-N
   Default-Language:    Haskell2010
   Default-Extensions:  NoImplicitPrelude, OverloadedStrings,
@@ -109,7 +126,7 @@ Executable bam-rmdup
 
 Executable bam-trim
   Main-is:             bam-trim.hs
-  Ghc-options:         -Wall -rtsopts
+  Ghc-options:         -Wall -rtsopts -optl-static -optl-pthread
   -- Ghc-options:         -Wall -threaded -rtsopts -with-rtsopts=-N
   Default-Language:    Haskell2010
   Default-Extensions:  NoImplicitPrelude, OverloadedStrings, BangPatterns
@@ -121,7 +138,7 @@ Executable bam-trim
 
 Executable fastq2bam
   Main-is:             fastq2bam.hs
-  Ghc-options:         -Wall -rtsopts
+  Ghc-options:         -Wall -rtsopts -optl-static -optl-pthread
   -- Ghc-options:         -Wall -threaded -rtsopts -with-rtsopts=-N
   Default-Language:    Haskell2010
   Default-Extensions:  NoImplicitPrelude, OverloadedStrings, BangPatterns

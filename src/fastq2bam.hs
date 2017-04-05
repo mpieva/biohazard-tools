@@ -84,7 +84,7 @@ main = do (opts, [], errors) <- getopts `fmap` getArgs
 
           foldr ((>=>) . enum_input) run (reverse eff_inputs) $
                 joinI $ progress (verbose conf) $
-                joinI $ mapChunks (maybe concatDuals (mergeDuals $ lowqual conf) $ merge conf) $
+                joinI $ concatMapStream (maybe concatDuals (mergeDuals $ lowqual conf) $ merge conf) $
                 output conf (pgm mempty)
 
 
@@ -99,36 +99,13 @@ two a b = (a, Just b)
 mapU2 :: (a -> b) -> UpToTwo a -> UpToTwo b
 mapU2 f (a,b) = (f a, fmap f b)
 
-concatDuals :: [UpToTwo a] -> [a]
-concatDuals ((a,Just  b):ds) = a : b : concatDuals ds
-concatDuals ((a,Nothing):ds) = a : concatDuals ds
-concatDuals [              ] = []
+concatDuals :: UpToTwo a -> [a]
+concatDuals (a,Just  b) = [a,b]
+concatDuals (a,Nothing) = [ a ]
 
-mergeDuals :: Int -> Int -> [UpToTwo BamRec] -> [BamRec]
-mergeDuals lowq highq = go
-  where
-    go ((r1,Just  r2):ds)
-        = case merge_overlap r1 default_fwd_adapters r2 default_rev_adapters of
-            Nothing                   ->      r1  : r2  : go ds
-            Just (r1',r2',rm,q1,_q2)
-                | q1 < lowq           ->      r1  : r2  : go ds
-                | q1 >= highq         -> rm :             go ds
-                | lm < l1 || lm < l2  -> rm :             go ds
-                | otherwise           -> rm : r1' : r2' : go ds
-              where
-                lm = V.length (b_seq rm)
-                l1 = V.length (b_seq r1) - 20
-                l2 = V.length (b_seq r2) - 20
-
-    go ((r1,Nothing):ds)
-        = case trim_adapter r1 default_fwd_adapters of
-            Nothing              -> r1  :      go ds
-            Just (r',r1t,q1,_q2)
-                | q1 < lowq      -> r1  :      go ds
-                | q1 >= highq    -> r1t :      go ds
-                | otherwise      -> r1t : r' : go ds
-
-    go [] = []
+mergeDuals :: Int -> Int -> UpToTwo BamRec -> [BamRec]
+mergeDuals lowq highq (r1, Just r2) = mergeBam lowq highq default_fwd_adapters default_rev_adapters r1 r2
+mergeDuals lowq highq (r1, Nothing) = trimBam lowq highq default_fwd_adapters r1
 
 -- Enumerates a file.  Sequence and quality end up in b_seq and b_qual.
 fromFastq :: (MonadIO m, MonadMask m) => FilePath -> Enumerator [BamRec] m a
