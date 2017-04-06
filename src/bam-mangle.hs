@@ -2,20 +2,56 @@
 -- extraction of data.  Simple expression language, comparable to Unix
 -- 'find', but not to 'awk'.
 
+import Bio.Adna                                 ( alnFromMd, NPair )
 import Bio.Bam
 import Bio.Prelude
-import GHC.Float ( float2Double )
-import qualified Data.Attoparsec.ByteString.Char8 as A
-import Paths_biohazard_tools ( version )
+import Control.Monad.Trans.RWS.Strict
+import Data.Attoparsec.ByteString.Char8         ( (<?>) )
+import GHC.Float                                ( float2Double )
+import Paths_biohazard_tools                    ( version )
 import System.Console.GetOpt
-import qualified Data.ByteString as B
-import qualified Data.Vector.Generic as V
-import qualified Data.HashMap.Strict as H
 
--- data Conf = Conf
-    -- { conf_output :: Iteratee Bytes IO ()
-            -- ^ Output.  Depending on the expression supplied, we might
-            -- send either BAM or some sort of text.
+import qualified Data.Attoparsec.ByteString.Char8 as A
+import qualified Data.ByteString                  as B
+import qualified Data.HashMap.Strict              as H
+import qualified Data.Vector.Generic              as V
+
+data Conf = Conf
+    { conf_output :: BamMeta -> Iteratee [BamRaw] IO ()
+    , conf_expr   :: Maybe String
+    , conf_limit  :: Maybe Int }
+
+
+defaultConf :: Conf
+defaultConf = Conf (protectTerm . pipeBamOutput) Nothing Nothing
+
+options :: [OptDescr (Conf -> IO Conf)]
+options = [
+    Option "o" ["output"] (ReqArg set_output "FILE") "Send output to FILE",
+    Option "S" ["sam-pipe"] (NoArg set_sam_output) "Send sam to stdout",
+    Option "e" ["expr","filter"] (ReqArg set_expr "EXPR") "Use EXPR as filter",
+    Option "n"  ["numout","limit"] (ReqArg set_limit "NUM") "Output at most NUM records",
+    Option "h?" ["help","usage"] (NoArg disp_usage) "Display this message",
+    Option "V" ["version"] (NoArg disp_version) "Display version and exit" ]
+  where
+    set_output "-" c = return $ c { conf_output = pipeBamOutput }
+    set_output  fp c = return $ c { conf_output = writeBamFile fp }
+    set_sam_output c = return $ c { conf_output = joinI . mapStream unpackBam . pipeSamOutput }
+    set_expr     s c = return $ c { conf_expr   = Just s }
+    set_limit    a c = readIO a >>= \l -> return $ c { conf_limit = Just l }
+
+    disp_version _ = do pn <- getProgName
+                        hPutStrLn stderr $ pn ++ ", version " ++ showVersion version
+                        exitSuccess
+
+    disp_usage _ = do p <- getProgName
+                      hPutStrLn stderr $ "Usage: " ++ usageInfo (p ++ info) options
+                      exitSuccess
+
+    info = " [option...] [bam-file...]\n\
+           \Filters a set of BAM files by applying an expression to each record.  Options are:"
+
+
 
 -- The plan:  We take a filter expression and a number of input files.  Inputs
 -- are merged, if that doesn't make sense, use only one.  The expression
@@ -26,33 +62,54 @@ import qualified Data.HashMap.Strict as H
 
 main :: IO ()
 main = do
-    expr : files <- getArgs
+    (opts, files0, errors) <- getOpt Permute options <$> getArgs
+    unless (null errors) $ mapM_ (hPutStrLn stderr) errors >> exitFailure
+    conf <- foldr (>=>) return opts defaultConf
+    add_pg <- addPG $ Just version
+
+    let (expr, files) = maybe (case files0 of e:fs -> (e,fs)
+                                              [  ] -> error "Expression expected."
+                              ) (\e -> (e,files0)) (conf_expr conf)
+
     case A.parseOnly (A.skipSpace *> p_bool_expr <* A.endOfInput) (fromString expr) of
         Left err -> hPutStrLn stderr err >> exitFailure
-        Right f  -> go f files
+        Right f  -> mergeInputs combineCoordinates files >=> run $ \meta ->
+                    joinI $ mapMaybeStream (runExpr f meta) $
+                    joinI $ maybe (mapChunks id) takeStream (conf_limit conf) $
+                    conf_output conf (add_pg meta)
+
+
+runExpr :: Expr Bool -> BamMeta -> BamRaw -> Maybe BamRaw
+runExpr e m = unp . runRWS e (rgs, meta_refs m)
   where
-    go f files = mergeInputs combineCoordinates files >=> run $ \meta ->
-                 joinI $ filterStream (f meta) $
-                 joinI $ mapStream unpackBam $
-                 pipeBamOutput meta
+    unp (True,  s, ()) = Just s
+    unp (False, _, ()) = Nothing
+
+    !rgs = H.fromList [ (rg,(sm,lb))
+                      | ("RG", stuff) <- meta_other_shit m
+                      , ("ID", rg) <- stuff
+                      , ("LB", lb) <- stuff
+                      , ("SM", sm) <- stuff ]
 
 
 -- | We compile an expression of type a to a Haskell function that takes
 -- a BamHeader, a BamRaw, and returns an a.
-type Expr a = BamMeta -> BamRaw -> a
+type Expr = RWS (RGData,Refs) () BamRaw
+type RGData = H.HashMap Bytes (Bytes,Bytes)
+
 
 p_bool_expr :: A.Parser (Expr Bool)
-p_bool_expr = (\a f h b -> f h b $ a h b)
+p_bool_expr = (>>=)
     <$> p_bool_conj
-    <*> A.option (\_ _ a -> a)
-          ((\x h b a -> a || x h b) <$> (literal "||" *> p_bool_expr))
+    <*> A.option return
+          ((\y x -> if x then pure x else y) <$> (literal "||" *> p_bool_expr))
 
 
 p_bool_conj :: A.Parser (Expr Bool)
-p_bool_conj = (\a f h b -> f h b $ a h b)
+p_bool_conj = (>>=)
     <$> p_bool_atom
-    <*> A.option (\_ _ a -> a)
-          ((\x h b a -> a && x h b) <$> (literal "&&" *> p_bool_conj))
+    <*> A.option return
+          ((\y x -> if x then y else pure x) <$> (literal "&&" *> p_bool_conj))
 
 
 -- | Boolean atoms:
@@ -66,54 +123,89 @@ p_bool_conj = (\a f h b -> f h b $ a h b)
 p_bool_atom :: A.Parser (Expr Bool)
 p_bool_atom = A.choice
     [ A.char '(' *> A.skipSpace *> p_bool_expr <* A.char ')' <* A.skipSpace
-    , const . const True <$ literal "true"
-    , const . const False <$ literal "false"
+    , pure True <$ literal "true"
+    , pure False <$ literal "false"
     , is_defined <$> (literal "defined"  *> p_field_name)
     , is_num     <$> (literal "isnum"    *> p_field_name)
     , is_string  <$> (literal "isstring" *> p_field_name)
-    , (\e h b -> not (e h b)) <$> (literal "not" *> p_bool_atom)
-    , (\e h b -> not (e h b)) <$> (literal "!" *> p_bool_atom)
+    , fmap not <$> (literal "not" *> p_bool_atom)
+    , fmap not <$> (literal "!" *> p_bool_atom)
 
-    , const (isPaired         . unpackBam) <$ literal "paired"
-    , const (isProperlyPaired . unpackBam) <$ literal "properly"
-    , const (isUnmapped       . unpackBam) <$ literal "unmapped"
-    , const (isMateUnmapped   . unpackBam) <$ literal "mate-unmapped"
-    , const (isReversed       . unpackBam) <$ literal "reversed"
-    , const (isMateReversed   . unpackBam) <$ literal "mate-reversed"
-    , const (isFirstMate      . unpackBam) <$ literal "first-mate"
-    , const (isSecondMate     . unpackBam) <$ literal "second-mate"
-    , const (isAuxillary      . unpackBam) <$ literal "auxillary"
-    , const (isFailsQC        . unpackBam) <$ literal "failed"
-    , const (isDuplicate      . unpackBam) <$ literal "duplicate"
-    , const (isTrimmed        . unpackBam) <$ literal "trimmed"
-    , const (isMerged         . unpackBam) <$ literal "merged"
-    , const (isVestigial      . unpackBam) <$ literal "vestigial"
+    , gets (isPaired         . unpackBam) <$ literal "paired"
+    , gets (isProperlyPaired . unpackBam) <$ literal "properly"
+    , gets (isUnmapped       . unpackBam) <$ literal "unmapped"
+    , gets (isMateUnmapped   . unpackBam) <$ literal "mate-unmapped"
+    , gets (isReversed       . unpackBam) <$ literal "reversed"
+    , gets (isMateReversed   . unpackBam) <$ literal "mate-reversed"
+    , gets (isFirstMate      . unpackBam) <$ literal "first-mate"
+    , gets (isSecondMate     . unpackBam) <$ literal "second-mate"
+    , gets (isAuxillary      . unpackBam) <$ literal "auxillary"
+    , gets (isFailsQC        . unpackBam) <$ literal "failed"
+    , gets (isDuplicate      . unpackBam) <$ literal "duplicate"
+    , gets (isTrimmed        . unpackBam) <$ literal "trimmed"
+    , gets (isMerged         . unpackBam) <$ literal "merged"
+    , gets (isVestigial      . unpackBam) <$ literal "vestigial"
+    , gets (isDeaminated     . unpackBam) <$ literal "deaminated"
 
-    , A.try $ (\x o y h b -> x h b `o` y h b) <$>
-        p_string_atom <*> ((==) <$ literal "eq" <|> (/=) <$ literal "neq") <*> p_string_atom
-    , A.try $ (\x o y h b -> x h b `o` y h b) <$> p_num_atom <*> num_op <*> p_num_atom ]
+    , do_clearF <$ literal "clear-failed"
+    , do_setF   <$ literal "set-failed"
+    , setFF 1   <$ literal "set-trimmed"
+    , setFF 2   <$ literal "set-merged"
+
+    , A.try $ (\x o y -> liftA2 o x y) <$> p_string_atom <*> str_op <*> p_string_atom
+    , A.try $ (\x o y -> liftA2 o x y) <$> p_num_atom    <*> num_op <*> p_num_atom ]
   where
     num_op :: A.Parser (Double -> Double -> Bool)
-    num_op = A.choice
-        [ (==) <$ literal "=="
-        , (/=) <$ literal "/="
-        , (<=) <$ literal "<="
-        , (>=) <$ literal ">="
-        , (<) <$ literal "<"
-        , (>) <$ literal ">" ]
+    num_op = A.choice [ (==) <$ literal "==", (<=) <$ literal "<=", (>=) <$ literal ">="
+                      , (/=) <$ literal "!=", (<)  <$ literal  "<", (>)  <$ literal  ">" ]
 
-    is_num key _ br = case lookup key (b_exts (unpackBam br)) of
+    str_op :: A.Parser (Bytes -> Bytes -> Bool)
+    str_op = A.choice [ (==) <$ literal "~", (/=) <$ literal "!~" ]
+
+    is_num key = gets $ \br -> case lookup key (b_exts (unpackBam br)) of
             Just (Int   _) -> True
             Just (Float _) -> True
             _              -> False
 
-    is_string key _ br = case lookup key (b_exts (unpackBam br)) of
+    is_string key = gets $ \br -> case lookup key (b_exts (unpackBam br)) of
             Just (Text _) -> True
             Just (Bin  _) -> True
             Just (Char _) -> True
             _             -> False
 
-    is_defined key _ = isJust . lookup key . b_exts . unpackBam
+    is_defined key = gets $ isJust . lookup key . b_exts . unpackBam
+
+    do_clearF = True <$ modify (\br ->
+                    let f_hi = B.index (raw_data br) 15
+                        rd'  = B.concat [ B.take 15 (raw_data br)
+                                        , B.singleton (clearBit f_hi 1)
+                                        , B.drop 16 (raw_data br) ]
+                    in if testBit f_hi 1 then br { raw_data = rd' } else br)
+
+    do_setF   = True <$ modify (\br ->
+                    let f_hi = B.index (raw_data br) 15
+                        rd'  = B.concat [ B.take 15 (raw_data br)
+                                        , B.singleton (setBit f_hi 1)
+                                        , B.drop 16 (raw_data br) ]
+                    in if testBit f_hi 1 then br else br { raw_data = rd' })
+
+    setFF f   = True <$ modify (\br -> let b  = unpackBam br
+                                           ff = extAsInt 0 "FF" b
+                                           b' = b { b_exts = updateE "FF" (Int (ff .|. f)) $ b_exts b }
+                                       in if ff .|. f == ff then br else unsafePerformIO (packBam b'))
+
+isDeaminated :: BamRec -> Bool
+isDeaminated b | V.length (b_seq b) < 4 = False      -- stupid corner case, don't want to crash
+isDeaminated b =
+    case alnFromMd (b_seq b) (b_cigar b) <$> getMd b of
+        Nothing  -> False
+        Just aln -> V.head aln == cg || V.head (V.tail aln) == cg ||
+                    V.last aln == cg || V.last (V.init aln) == cg ||
+                    V.last aln == ga || V.last (V.init aln) == ga
+  where
+    cg, ga :: NPair
+    cg = ( nucsC, nucsT )
+    ga = ( nucsG, nucsA )
 
 
 -- | Numeric-valued atoms (float or int, everything is converted to
@@ -125,30 +217,30 @@ p_bool_atom = A.choice
 
 p_num_atom :: A.Parser (Expr Double)
 p_num_atom = A.choice
-    [ from_num_field                                        <$> p_field_name
-    , const (fromIntegral . unRefseq . b_rname . unpackBam) <$  literal "RNAME"
-    , const (fromIntegral .              b_pos . unpackBam) <$  literal "POS"
-    , const (fromIntegral . unRefseq .  b_mrnm . unpackBam) <$  literal "MRNM"
-    , const (fromIntegral . unRefseq .  b_mrnm . unpackBam) <$  literal "RNEXT"
-    , const (fromIntegral .             b_mpos . unpackBam) <$  literal "MPOS"
-    , const (fromIntegral .             b_mpos . unpackBam) <$  literal "PNEXT"
-    , const (fromIntegral .            b_isize . unpackBam) <$  literal "ISIZE"
-    , const (fromIntegral .            b_isize . unpackBam) <$  literal "TLEN"
-    , const (fromIntegral . unQ .       b_mapq . unpackBam) <$  literal "MAPQ"
-    , const (fromIntegral . V.length .   b_seq . unpackBam) <$  literal "LENGTH"
+    [ from_num_field                                       <$> p_field_name
+    , gets (fromIntegral . unRefseq . b_rname . unpackBam) <$  literal "RNAME"
+    , gets (fromIntegral .              b_pos . unpackBam) <$  literal "POS"
+    , gets (fromIntegral . unRefseq .  b_mrnm . unpackBam) <$  literal "MRNM"
+    , gets (fromIntegral . unRefseq .  b_mrnm . unpackBam) <$  literal "RNEXT"
+    , gets (fromIntegral .             b_mpos . unpackBam) <$  literal "MPOS"
+    , gets (fromIntegral .             b_mpos . unpackBam) <$  literal "PNEXT"
+    , gets (fromIntegral .            b_isize . unpackBam) <$  literal "ISIZE"
+    , gets (fromIntegral .            b_isize . unpackBam) <$  literal "TLEN"
+    , gets (fromIntegral . unQ .       b_mapq . unpackBam) <$  literal "MAPQ"
+    , gets (fromIntegral . V.length .   b_seq . unpackBam) <$  literal "LENGTH"
 
-    , const (fromIntegral . extAsInt    0 "Z0" . unpackBam) <$  literal "unknownness"
-    , const (fromIntegral . extAsInt 9999 "Z1" . unpackBam) <$  literal "rgquality"
-    , const (fromIntegral . extAsInt    0 "Z2" . unpackBam) <$  literal "wrongness"
-    , const . const                                         <$> A.double <* A.skipSpace ]
+    , gets (fromIntegral . extAsInt    0 "Z0" . unpackBam) <$  literal "unknownness"
+    , gets (fromIntegral . extAsInt 9999 "Z1" . unpackBam) <$  literal "rgquality"
+    , gets (fromIntegral . extAsInt    0 "Z2" . unpackBam) <$  literal "wrongness"
+    , pure                                                 <$> A.double <* A.skipSpace ]
   where
-    from_num_field key _ br = case lookup key (b_exts (unpackBam br)) of
+    from_num_field key = gets $ \br -> case lookup key (b_exts (unpackBam br)) of
             Just (Int   x) -> fromIntegral x
             Just (Float x) -> float2Double x
             _              -> 0
 
 literal :: Bytes -> A.Parser ()
-literal key = A.string key *> A.skipSpace
+literal key = A.string key *> A.skipSpace <?> unpack key
 
 -- | Parses name of a tagged field.  This is an alphabetic character
 -- followed by an alphanumeric character.
@@ -173,28 +265,25 @@ p_string_atom = A.choice
     , lookupRef  b_mrnm <$  literal "RNEXT"
     , get_library       <$  literal "library"
     , get_sample        <$  literal "sample"
-    , const . const     <$> p_string_lit ]
+    , pure              <$> p_string_lit ]
   where
-    from_string_field key _ br = case lookup key (b_exts (unpackBam br)) of
+    from_string_field key = gets $ \br -> case lookup key (b_exts (unpackBam br)) of
             Just (Text x) -> x
             Just (Bin  x) -> x
             Just (Char x) -> B.singleton x
             _             -> B.empty
 
-    lookupRef f m b = sq_name . getRef (meta_refs m) . f . unpackBam $ b
+    lookupRef f = asks snd >>= \m -> gets $ sq_name . getRef m . f . unpackBam
 
-    get_library m = \b -> let lb = extAsString "LB" $ unpackBam b
-                          in if B.null lb then H.lookupDefault B.empty (extAsString "RG" $ unpackBam b) lbs else lb
-      where
-        !lbs = H.fromList [ (rg,lb) | ("RG", stuff) <- meta_other_shit m
-                                    , ("LB", lb) <- stuff
-                                    , ("ID", rg) <- stuff ]
+    lookup_rg b = asks $ H.lookupDefault (B.empty,B.empty) (extAsString "RG" b) . fst
 
-    get_sample m = \b -> H.lookupDefault B.empty (extAsString "RG" $ unpackBam b) sms
-      where
-        !sms = H.fromList [ (rg,sm) | ("RG", stuff) <- meta_other_shit m
-                                    , ("SM", sm) <- stuff
-                                    , ("ID", rg) <- stuff ]
+    get_library :: Expr Bytes
+    get_library = do b <- gets unpackBam
+                     let lb = extAsString "LB" b
+                     if B.null lb then snd <$> lookup_rg b else return lb
+
+    get_sample :: Expr Bytes
+    get_sample = gets unpackBam >>= fmap fst . lookup_rg
 
 
 -- | String literal.  We'll need escapes, but for now this should do.
