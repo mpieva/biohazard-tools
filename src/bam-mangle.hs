@@ -27,12 +27,14 @@ defaultConf = Conf (protectTerm . pipeBamOutput) Nothing Nothing
 
 options :: [OptDescr (Conf -> IO Conf)]
 options = [
-    Option "o" ["output"] (ReqArg set_output "FILE") "Send output to FILE",
-    Option "S" ["sam-pipe"] (NoArg set_sam_output) "Send sam to stdout",
-    Option "e" ["expr","filter"] (ReqArg set_expr "EXPR") "Use EXPR as filter",
-    Option "n"  ["numout","limit"] (ReqArg set_limit "NUM") "Output at most NUM records",
-    Option "h?" ["help","usage"] (NoArg disp_usage) "Display this message",
-    Option "V" ["version"] (NoArg disp_version) "Display version and exit" ]
+    Option "o"  ["output"]         (ReqArg set_output "FILE") "Send output to FILE",
+    Option "S"  ["sam-pipe"]       (NoArg     set_sam_output) "Send sam to stdout",
+    Option "e"  ["expr","filter"]  (ReqArg set_expr   "EXPR") "Use EXPR as filter",
+    Option "n"  ["numout","limit"] (ReqArg set_limit   "NUM") "Output at most NUM records",
+    Option "p"  ["print"]          (ReqArg set_print  "EXPR") "Print result of EXPR for each record",
+    Option "s"  ["sum"]            (ReqArg set_sum    "EXPR") "Sum results of EXPR",
+    Option "h?" ["help","usage"]   (NoArg         disp_usage) "Display this message",
+    Option "V"  ["version"]        (NoArg       disp_version) "Display version and exit" ]
   where
     set_output "-" c = return $ c { conf_output = pipeBamOutput }
     set_output  fp c = return $ c { conf_output = writeBamFile fp }
@@ -51,6 +53,17 @@ options = [
     info = " [option...] [bam-file...]\n\
            \Filters a set of BAM files by applying an expression to each record.  Options are:"
 
+    set_sum e c = case parse_str p_num_atom e of
+        Left   err  -> hPutStrLn stderr err >> exitFailure
+        Right f_num -> return $ c { conf_output = \m -> foldStream (p m) 0 >>= liftIO . print  }
+            where p m acc = (+) acc . fst . evalExpr f_num m
+
+    set_print e c = case parse_str (A.eitherP p_num_atom p_string_atom) e of
+        Left           err  -> hPutStrLn stderr err >> exitFailure
+        Right (Left  f_num) -> return $ c { conf_output = mapStreamM_ . p }
+            where p m = print . fst . evalExpr f_num m
+        Right (Right f_str) -> return $ c { conf_output = mapStreamM_ . p }
+            where p m = B.hPut stdout . fst . evalExpr f_str m
 
 
 -- The plan:  We take a filter expression and a number of input files.  Inputs
@@ -59,6 +72,8 @@ options = [
 -- expression to extract some data, which we may want to sum up.  Where
 -- do we put the few modifying functions?
 
+parse_str :: A.Parser a -> String -> Either String a
+parse_str p = A.parseOnly (A.skipSpace *> p <* A.endOfInput) . fromString
 
 main :: IO ()
 main = do
@@ -71,7 +86,7 @@ main = do
                                               [  ] -> error "Expression expected."
                               ) (\e -> (e,files0)) (conf_expr conf)
 
-    case A.parseOnly (A.skipSpace *> p_bool_expr <* A.endOfInput) (fromString expr) of
+    case parse_str p_bool_expr expr of
         Left err -> hPutStrLn stderr err >> exitFailure
         Right f  -> mergeInputs combineCoordinates files >=> run $ \meta ->
                     joinI $ mapMaybeStream (runExpr f meta) $
@@ -79,11 +94,22 @@ main = do
                     conf_output conf (add_pg meta)
 
 
+-- | We compile an expression of type a to a Haskell function that takes
+-- a BamHeader, a BamRaw, and returns an a.
+type Expr = RWS (RGData,Refs) () BamRaw
+type RGData = H.HashMap Bytes (Bytes,Bytes)
+
 runExpr :: Expr Bool -> BamMeta -> BamRaw -> Maybe BamRaw
-runExpr e m = unp . runRWS e (rgs, meta_refs m)
+runExpr e m = unp . evalExpr e m
   where
-    unp (True,  s, ()) = Just s
-    unp (False, _, ()) = Nothing
+    unp (True,  s) = Just s
+    unp (False, _) = Nothing
+
+
+evalExpr :: Expr a -> BamMeta -> BamRaw -> (a, BamRaw)
+evalExpr e m = unp . runRWS e (rgs, meta_refs m)
+  where
+    unp (a, s, ()) = (a, s)
 
     !rgs = H.fromList [ (rg,(sm,lb))
                       | ("RG", stuff) <- meta_other_shit m
@@ -91,19 +117,11 @@ runExpr e m = unp . runRWS e (rgs, meta_refs m)
                       , ("LB", lb) <- stuff
                       , ("SM", sm) <- stuff ]
 
-
--- | We compile an expression of type a to a Haskell function that takes
--- a BamHeader, a BamRaw, and returns an a.
-type Expr = RWS (RGData,Refs) () BamRaw
-type RGData = H.HashMap Bytes (Bytes,Bytes)
-
-
 p_bool_expr :: A.Parser (Expr Bool)
 p_bool_expr = (>>=)
     <$> p_bool_conj
     <*> A.option return
           ((\y x -> if x then pure x else y) <$> (literal "||" *> p_bool_expr))
-
 
 p_bool_conj :: A.Parser (Expr Bool)
 p_bool_conj = (>>=)
@@ -111,14 +129,13 @@ p_bool_conj = (>>=)
     <*> A.option return
           ((\y x -> if x then y else pure x) <$> (literal "&&" *> p_bool_conj))
 
-
 -- | Boolean atoms:
 -- - string comparisons
 -- - numeric comparisons
 -- - definedness/isnum/isstring of a tag
 -- - negation
 -- - true and false
--- Missing:  tah flags
+-- - the flags
 
 p_bool_atom :: A.Parser (Expr Bool)
 p_bool_atom = A.choice
