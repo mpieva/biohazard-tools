@@ -3,14 +3,18 @@ import Bio.Bam.Rmdup
 import Bio.Iteratee.Builder
 import Bio.Prelude
 import Bio.Util.Numeric                         ( showNum, showOOM, estimateComplexity )
+import Data.ByteString.Builder
 import Paths_biohazard_tools                    ( version )
 import System.Console.GetOpt
+import System.IO                                ( withFile, IOMode(..) )
 
 import qualified Data.ByteString.Char8          as S
 import qualified Data.HashMap.Strict            as M
 import qualified Data.IntMap                    as I
 import qualified Data.Sequence                  as Z
 import qualified Data.Vector.Generic            as V
+import qualified Data.Vector.Unboxed            as U hiding ( replicate )
+import qualified Data.Vector.Unboxed.Mutable    as U ( replicate, read, write )
 
 data Conf = Conf {
     output :: Maybe ((BamRec -> Seqid) -> BamMeta -> Iteratee [BamRec] IO ()),
@@ -25,6 +29,7 @@ data Conf = Conf {
     min_qual :: Qual,
     get_label :: HashMap Seqid Seqid -> BamRec -> Seqid,
     putResult :: String -> IO (),
+    putHistogram :: U.Vector Int -> IO (),
     debug :: String -> IO (),
     which :: Which,
     circulars :: Refs -> IO (IntMap (Seqid,Int), Refs) }
@@ -45,6 +50,7 @@ defaults = Conf { output = Nothing
                 , min_qual = Q 0
                 , get_label = get_library
                 , putResult = putStr
+                , putHistogram = \_ -> return ()
                 , debug = \_ -> return ()
                 , which = Allrefs
                 , circulars = \rs -> return (I.empty, rs) }
@@ -53,6 +59,7 @@ options :: [OptDescr (Conf -> IO Conf)]
 options = [
     Option  "o" ["output"]         (ReqArg set_output "FILE") "Write to FILE (default: no output, count only)",
     Option  "O" ["output-lib"]     (ReqArg set_lib_out "PAT") "Write each lib to file named following PAT",
+    Option  "H" ["histogram"]      (ReqArg set_hist   "FILE") "Write histogram to FILE",
     Option  [ ] ["debug"]          (NoArg  set_debug_out)     "Write textual debugging output",
     Option  "z" ["circular"]       (ReqArg add_circular "CHR:LEN") "Refseq CHR is circular with length LEN",
     Option  "R" ["refseq"]         (ReqArg set_range "RANGE") "Read only range of reference sequences",
@@ -88,6 +95,7 @@ options = [
     set_mapq     n c = readIO n >>= \q -> return $ c { min_qual = Q q }
     set_no_rg      c =                    return $ c { get_label = get_no_library }
     set_multi      c =                    return $ c { clean_multimap = clean_multi_flags }
+    set_hist    fp c =                    return $ c { putHistogram = writeHistogramFile fp }
 
     set_range    a c
         | a == "A" || a == "a" = return $ c { which = Allrefs }
@@ -179,7 +187,7 @@ main = do
     Conf{..} <- foldr (>=>) return opts defaults
 
     add_pg <- addPG $ Just version
-    (counts, ()) <- mergeInputRanges which files >=> run $ \hdr -> do
+    mergeInputRanges which files >=> run $ \hdr -> do
        (circtable, refs') <- liftIO $ circulars (meta_refs hdr)
        let tbl = mk_rg_tbl hdr
        unless (M.null tbl) $ liftIO $ do
@@ -197,31 +205,35 @@ main = do
                 , eff_len b >= min_len              = [b]
            cleanup3 _                               = [ ]
 
-       (ct,ou) <- progressBam "Rmdup at" refs' 0x8000 debug                                          =$
-                  takeWhileE is_halfway_aligned                                                      =$
-                  concatMapStreamM cleanup                                                           =$
-                  normalizeSortWith circtable                                                        =$
-                  filterStream (\b -> b_mapq b >= min_qual)                                          =$
-                  case output of
-                       Nothing -> rmdup (get_label tbl) strand_preserved (cheap_collapse' keep_all)  =$
-                                  count_all (get_label tbl) `zipStreams` (skipToEof <$ skipToEof)
+       (ct,hist,ou) <- progressBam "Rmdup at" refs' 0x8000 debug                                          =$
+                       takeWhileE is_halfway_aligned                                                      =$
+                       concatMapStreamM cleanup                                                           =$
+                       normalizeSortWith circtable                                                        =$
+                       filterStream (\b -> b_mapq b >= min_qual)                                          =$
+                       case output of
+                            Nothing -> rmdup (get_label tbl) strand_preserved (cheap_collapse' keep_all)  =$
+                                       zipStreams3 (mapStream snd =$ count_all (get_label tbl))
+                                                   (mapStream fst =$ collect_histogram)
+                                                   (skipToEof <$ skipToEof)
 
-                       Just  o -> rmdup (get_label tbl) strand_preserved (collapse keep_all)         =$
-                                  zipStreams (count_all (get_label tbl))
-                                             (wrapSortWith circtable                                 $
-                                              o (get_label tbl) (add_pg hdr { meta_refs = refs' }))
+                            Just  o -> rmdup (get_label tbl) strand_preserved (collapse keep_all)         =$
+                                       zipStreams3 (mapStream snd =$ count_all (get_label tbl))
+                                                   (mapStream fst =$ collect_histogram)
+                                                   (mapStream snd =$
+                                                    (wrapSortWith circtable $
+                                                     o (get_label tbl) (add_pg hdr { meta_refs = refs' })))
 
        let do_copy = progressBam "Copying junk at" refs' 0x8000 debug ><>
                      concatMapStreamM cleanup
 
-       r <- case which of Unaln              -> lift (run $ do_copy =$ ou)
-                          _ | keep_unaligned -> lift (run $ do_copy =$ ou)
-                          _                  -> lift (run ou)
-       return (ct,r)
+       case which of Unaln              -> lift (run $ do_copy =$ ou)
+                     _ | keep_unaligned -> lift (run $ do_copy =$ ou)
+                     _                  -> lift (run ou)
 
-    putResult . unlines $
-        "\27[K#RG\tin\tout\tin@MQ20\tsingle@MQ20\tunseen\ttotal\t%unique\t%exhausted"
-        : map (uncurry do_report) (M.toList counts)
+       liftIO $ do putHistogram hist
+                   putResult . unlines $
+                       "\27[K#RG\tin\tout\tin@MQ20\tsingle@MQ20\tunseen\ttotal\t%unique\t%exhausted"
+                       : map (uncurry do_report) (M.toList ct)
 
 
 do_report :: Seqid -> Counts -> String
@@ -243,6 +255,20 @@ do_report lbl Counts{..} = intercalate "\t" fs
         exhaustion  = 100 * fromIntegral good_total / good_grand_total
         rate        = 100 * fromIntegral tout / fromIntegral tin :: Double
 
+
+collect_histogram :: MonadIO m => Iteratee [Int] m (U.Vector Int)
+collect_histogram = do
+    vec <- liftIO $ U.replicate 1024 0
+    mapStreamM_ $ \i -> when (i<1024) . liftIO $ U.read vec i >>= U.write vec i . succ
+    liftIO $ U.unsafeFreeze vec
+
+writeHistogramFile :: FilePath -> U.Vector Int -> IO ()
+writeHistogramFile fp v = withFile fp WriteMode $ \hdl ->
+    hPutBuilder hdl .
+    U.ifoldr (\i f b -> intDec i <> char7 '\t' <> doubleDec f <> char7 '\n' <> b) mempty .
+    U.map ((*) scale . fromIntegral) . U.reverse . U.dropWhile (==0) . U.reverse $ v
+  where
+    scale = recip . fromIntegral $ U.sum v
 
 -- | Counting reads:  we count total read in (ti), total reads out (to),
 -- good (confidently mapped) singletons out (gs), total good
