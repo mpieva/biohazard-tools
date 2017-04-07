@@ -1,19 +1,22 @@
+{-# LANGUAGE RecordWildCards #-}
 -- Generic bam mangler.  Mostly filters, some mutating operations, some
 -- extraction of data.  Simple expression language, comparable to Unix
 -- 'find', but not to 'awk'.
 
 import Bio.Adna                                 ( alnFromMd, NPair )
-import Bio.Bam
-import Bio.Prelude
+import Bio.Bam                           hiding ( ParseError )
+import Bio.Prelude                       hiding ( try )
 import Control.Monad.Trans.RWS.Strict
-import Data.Attoparsec.ByteString.Char8         ( (<?>) )
+import Data.Functor.Identity                    ( Identity )
+import Data.HashMap.Strict                      ( lookupDefault, fromList )
 import GHC.Float                                ( float2Double )
 import Paths_biohazard_tools                    ( version )
 import System.Console.GetOpt
+import Text.Parsec                       hiding ( (<|>) )
+import Text.Parsec.Token
+import Text.Regex.Posix                         ( (=~) )
 
-import qualified Data.Attoparsec.ByteString.Char8 as A
 import qualified Data.ByteString                  as B
-import qualified Data.HashMap.Strict              as H
 import qualified Data.Vector.Generic              as V
 
 data Conf = Conf
@@ -54,17 +57,18 @@ options = [
            \Filters a set of BAM files by applying an expression to each record.  Options are:"
 
     set_sum e c = case parse_str p_num_atom e of
-        Left   err  -> hPutStrLn stderr err >> exitFailure
+        Left   err  -> hPrint stderr err >> exitFailure
         Right f_num -> return $ c { conf_output = \m -> foldStream (p m) 0 >>= liftIO . print  }
             where p m acc = (+) acc . fst . evalExpr f_num m
 
-    set_print e c = case parse_str (A.eitherP p_num_atom p_string_atom) e of
-        Left           err  -> hPutStrLn stderr err >> exitFailure
+    set_print e c = case parse_str (Left <$> p_num_atom <|> Right <$> p_string_atom) e of
+        Left           err  -> hPrint stderr err >> exitFailure
         Right (Left  f_num) -> return $ c { conf_output = mapStreamM_ . p }
             where p m = print . fst . evalExpr f_num m
         Right (Right f_str) -> return $ c { conf_output = mapStreamM_ . p }
             where p m = B.hPut stdout . fst . evalExpr f_str m
 
+type Parser a = Parsec String () a
 
 -- The plan:  We take a filter expression and a number of input files.  Inputs
 -- are merged, if that doesn't make sense, use only one.  The expression
@@ -72,8 +76,8 @@ options = [
 -- expression to extract some data, which we may want to sum up.  Where
 -- do we put the few modifying functions?
 
-parse_str :: A.Parser a -> String -> Either String a
-parse_str p = A.parseOnly (A.skipSpace *> p <* A.endOfInput) . fromString
+parse_str :: Parser a -> String -> Either ParseError a
+parse_str p = parse (whiteSpace tp *> p <* eof) ""
 
 main :: IO ()
 main = do
@@ -87,7 +91,7 @@ main = do
                               ) (\e -> (e,files0)) (conf_expr conf)
 
     case parse_str p_bool_expr expr of
-        Left err -> hPutStrLn stderr err >> exitFailure
+        Left err -> hPrint stderr err >> exitFailure
         Right f  -> mergeInputs combineCoordinates files >=> run $ \meta ->
                     joinI $ mapMaybeStream (runExpr f meta) $
                     joinI $ maybe (mapChunks id) takeStream (conf_limit conf) $
@@ -97,7 +101,7 @@ main = do
 -- | We compile an expression of type a to a Haskell function that takes
 -- a BamHeader, a BamRaw, and returns an a.
 type Expr = RWS (RGData,Refs) () BamRaw
-type RGData = H.HashMap Bytes (Bytes,Bytes)
+type RGData = HashMap Bytes (Bytes,Bytes)
 
 runExpr :: Expr Bool -> BamMeta -> BamRaw -> Maybe BamRaw
 runExpr e m = unp . evalExpr e m
@@ -111,23 +115,23 @@ evalExpr e m = unp . runRWS e (rgs, meta_refs m)
   where
     unp (a, s, ()) = (a, s)
 
-    !rgs = H.fromList [ (rg,(sm,lb))
-                      | ("RG", stuff) <- meta_other_shit m
-                      , ("ID", rg) <- stuff
-                      , ("LB", lb) <- stuff
-                      , ("SM", sm) <- stuff ]
+    !rgs = fromList [ (rg,(sm,lb))
+                    | ("RG", stuff) <- meta_other_shit m
+                    , ("ID", rg) <- stuff
+                    , ("LB", lb) <- stuff
+                    , ("SM", sm) <- stuff ]
 
-p_bool_expr :: A.Parser (Expr Bool)
+p_bool_expr :: Parser (Expr Bool)
 p_bool_expr = (>>=)
     <$> p_bool_conj
-    <*> A.option return
-          ((\y x -> if x then pure x else y) <$> (literal "||" *> p_bool_expr))
+    <*> option return
+          ((\y x -> if x then pure x else y) <$> (reserved tp "||" *> p_bool_expr))
 
-p_bool_conj :: A.Parser (Expr Bool)
+p_bool_conj :: Parser (Expr Bool)
 p_bool_conj = (>>=)
     <$> p_bool_atom
-    <*> A.option return
-          ((\y x -> if x then y else pure x) <$> (literal "&&" *> p_bool_conj))
+    <*> option return
+          ((\y x -> if x then y else pure x) <$> (reserved tp "&&" *> p_bool_conj))
 
 -- | Boolean atoms:
 -- - string comparisons
@@ -137,47 +141,47 @@ p_bool_conj = (>>=)
 -- - true and false
 -- - the flags
 
-p_bool_atom :: A.Parser (Expr Bool)
-p_bool_atom = A.choice
-    [ A.char '(' *> A.skipSpace *> p_bool_expr <* A.char ')' <* A.skipSpace
-    , pure True <$ literal "true"
-    , pure False <$ literal "false"
-    , is_defined <$> (literal "defined"  *> p_field_name)
-    , is_num     <$> (literal "isnum"    *> p_field_name)
-    , is_string  <$> (literal "isstring" *> p_field_name)
-    , fmap not <$> (literal "not" *> p_bool_atom)
-    , fmap not <$> (literal "!" *> p_bool_atom)
+p_bool_atom :: Parser (Expr Bool)
+p_bool_atom = choice
+    [ parens tp p_bool_expr
+    , pure True  <$ reserved tp "true"
+    , pure False <$ reserved tp "false"
+    , is_defined <$> (reserved tp "defined"  *> p_field_name)
+    , is_num     <$> (reserved tp "isnum"    *> p_field_name)
+    , is_string  <$> (reserved tp "isstring" *> p_field_name)
+    , fmap not   <$> (reserved tp "not" *> p_bool_atom)
+    , fmap not   <$> (reserved tp "!" *> p_bool_atom)
 
-    , gets (isPaired         . unpackBam) <$ literal "paired"
-    , gets (isProperlyPaired . unpackBam) <$ literal "properly"
-    , gets (isUnmapped       . unpackBam) <$ literal "unmapped"
-    , gets (isMateUnmapped   . unpackBam) <$ literal "mate-unmapped"
-    , gets (isReversed       . unpackBam) <$ literal "reversed"
-    , gets (isMateReversed   . unpackBam) <$ literal "mate-reversed"
-    , gets (isFirstMate      . unpackBam) <$ literal "first-mate"
-    , gets (isSecondMate     . unpackBam) <$ literal "second-mate"
-    , gets (isAuxillary      . unpackBam) <$ literal "auxillary"
-    , gets (isFailsQC        . unpackBam) <$ literal "failed"
-    , gets (isDuplicate      . unpackBam) <$ literal "duplicate"
-    , gets (isTrimmed        . unpackBam) <$ literal "trimmed"
-    , gets (isMerged         . unpackBam) <$ literal "merged"
-    , gets (isVestigial      . unpackBam) <$ literal "vestigial"
-    , gets (isDeaminated     . unpackBam) <$ literal "deaminated"
+    , gets (isPaired         . unpackBam) <$ reserved tp "paired"
+    , gets (isProperlyPaired . unpackBam) <$ reserved tp "properly"
+    , gets (isUnmapped       . unpackBam) <$ reserved tp "unmapped"
+    , gets (isMateUnmapped   . unpackBam) <$ reserved tp "mate-unmapped"
+    , gets (isReversed       . unpackBam) <$ reserved tp "reversed"
+    , gets (isMateReversed   . unpackBam) <$ reserved tp "mate-reversed"
+    , gets (isFirstMate      . unpackBam) <$ reserved tp "first-mate"
+    , gets (isSecondMate     . unpackBam) <$ reserved tp "second-mate"
+    , gets (isAuxillary      . unpackBam) <$ reserved tp "auxillary"
+    , gets (isFailsQC        . unpackBam) <$ reserved tp "failed"
+    , gets (isDuplicate      . unpackBam) <$ reserved tp "duplicate"
+    , gets (isTrimmed        . unpackBam) <$ reserved tp "trimmed"
+    , gets (isMerged         . unpackBam) <$ reserved tp "merged"
+    , gets (isVestigial      . unpackBam) <$ reserved tp "vestigial"
+    , gets (isDeaminated     . unpackBam) <$ reserved tp "deaminated"
 
-    , do_clearF <$ literal "clear-failed"
-    , do_setF   <$ literal "set-failed"
-    , setFF 1   <$ literal "set-trimmed"
-    , setFF 2   <$ literal "set-merged"
+    , do_clearF <$ reserved tp "clear-failed"
+    , do_setF   <$ reserved tp "set-failed"
+    , setFF 1   <$ reserved tp "set-trimmed"
+    , setFF 2   <$ reserved tp "set-merged"
 
-    , A.try $ (\x o y -> liftA2 o x y) <$> p_string_atom <*> str_op <*> p_string_atom
-    , A.try $ (\x o y -> liftA2 o x y) <$> p_num_atom    <*> num_op <*> p_num_atom ]
+    , try $ (\x o y -> liftA2 o x y) <$> p_string_atom <*> str_op <*> p_string_atom
+    , try $ (\x o y -> liftA2 o x y) <$> p_num_atom    <*> num_op <*> p_num_atom ]
   where
-    num_op :: A.Parser (Double -> Double -> Bool)
-    num_op = A.choice [ (==) <$ literal "==", (<=) <$ literal "<=", (>=) <$ literal ">="
-                      , (/=) <$ literal "!=", (<)  <$ literal  "<", (>)  <$ literal  ">" ]
+    num_op :: Parser (Double -> Double -> Bool)
+    num_op = choice [ (==) <$ reserved tp "==", (<=) <$ reserved tp "<=", (>=) <$ reserved tp ">="
+                    , (/=) <$ reserved tp "!=", (<)  <$ reserved tp  "<", (>)  <$ reserved tp  ">" ]
 
-    str_op :: A.Parser (Bytes -> Bytes -> Bool)
-    str_op = A.choice [ (==) <$ literal "~", (/=) <$ literal "!~" ]
+    str_op :: Parser (Bytes -> Bytes -> Bool)
+    str_op = choice [ (=~) <$ reserved tp "~", (.) not . (=~) <$ reserved tp "!~" ]
 
     is_num key = gets $ \br -> case lookup key (b_exts (unpackBam br)) of
             Just (Int   _) -> True
@@ -232,57 +236,55 @@ isDeaminated b =
 -- - mnemonic constants: wrongness, unexpectedness, rgquality
 -- - literals
 
-p_num_atom :: A.Parser (Expr Double)
-p_num_atom = A.choice
+p_num_atom :: Parser (Expr Double)
+p_num_atom = choice
     [ from_num_field                                       <$> p_field_name
-    , gets (fromIntegral . unRefseq . b_rname . unpackBam) <$  literal "RNAME"
-    , gets (fromIntegral .              b_pos . unpackBam) <$  literal "POS"
-    , gets (fromIntegral . unRefseq .  b_mrnm . unpackBam) <$  literal "MRNM"
-    , gets (fromIntegral . unRefseq .  b_mrnm . unpackBam) <$  literal "RNEXT"
-    , gets (fromIntegral .             b_mpos . unpackBam) <$  literal "MPOS"
-    , gets (fromIntegral .             b_mpos . unpackBam) <$  literal "PNEXT"
-    , gets (fromIntegral .            b_isize . unpackBam) <$  literal "ISIZE"
-    , gets (fromIntegral .            b_isize . unpackBam) <$  literal "TLEN"
-    , gets (fromIntegral . unQ .       b_mapq . unpackBam) <$  literal "MAPQ"
-    , gets (fromIntegral . V.length .   b_seq . unpackBam) <$  literal "LENGTH"
+    , gets (fromIntegral . unRefseq . b_rname . unpackBam) <$  reserved tp "RNAME"
+    , gets (fromIntegral .              b_pos . unpackBam) <$  reserved tp "POS"
+    , gets (fromIntegral . unRefseq .  b_mrnm . unpackBam) <$  reserved tp "MRNM"
+    , gets (fromIntegral . unRefseq .  b_mrnm . unpackBam) <$  reserved tp "RNEXT"
+    , gets (fromIntegral .             b_mpos . unpackBam) <$  reserved tp "MPOS"
+    , gets (fromIntegral .             b_mpos . unpackBam) <$  reserved tp "PNEXT"
+    , gets (fromIntegral .            b_isize . unpackBam) <$  reserved tp "ISIZE"
+    , gets (fromIntegral .            b_isize . unpackBam) <$  reserved tp "TLEN"
+    , gets (fromIntegral . unQ .       b_mapq . unpackBam) <$  reserved tp "MAPQ"
+    , gets (fromIntegral . V.length .   b_seq . unpackBam) <$  reserved tp "LENGTH"
 
-    , gets (fromIntegral . extAsInt    0 "Z0" . unpackBam) <$  literal "unknownness"
-    , gets (fromIntegral . extAsInt 9999 "Z1" . unpackBam) <$  literal "rgquality"
-    , gets (fromIntegral . extAsInt    0 "Z2" . unpackBam) <$  literal "wrongness"
-    , pure                                                 <$> A.double <* A.skipSpace ]
+    , gets (fromIntegral . extAsInt    0 "Z0" . unpackBam) <$  reserved tp "unknownness"
+    , gets (fromIntegral . extAsInt 9999 "Z1" . unpackBam) <$  reserved tp "rgquality"
+    , gets (fromIntegral . extAsInt    0 "Z2" . unpackBam) <$  reserved tp "wrongness"
+    , pure . either fromIntegral id                        <$> naturalOrFloat tp ]
   where
     from_num_field key = gets $ \br -> case lookup key (b_exts (unpackBam br)) of
             Just (Int   x) -> fromIntegral x
             Just (Float x) -> float2Double x
             _              -> 0
 
-literal :: Bytes -> A.Parser ()
-literal key = A.string key *> A.skipSpace <?> unpack key
+-- reserved tp :: Bytes -> Parser ()
+-- reserved tp key = A.string key *> spaces <?> unpack key
 
 -- | Parses name of a tagged field.  This is an alphabetic character
 -- followed by an alphanumeric character.
-p_field_name :: A.Parser BamKey
-p_field_name = A.try $ do a <- A.letter_ascii
-                          b <- A.letter_ascii <|> A.digit
-                          c <- A.peekChar
-                          guard $ maybe True (\z -> not (A.isDigit z || A.isAlpha_ascii z)) c
-                          A.skipSpace
-                          return $ fromString [a,b]
+p_field_name :: Parser BamKey
+p_field_name = do nm <- identifier tp -- a <- letter
+                  guard (length nm == 2)
+                  return $ fromString nm
+    <?> "2-letter tag"
 
 -- | String-valued atoms.  This includes:
 -- - tagged fields (default to "" if missing or wrong type)
 -- - predefined fields: RNAME, MRNM
 -- - convenience functions:  library?
 -- - literals
-p_string_atom :: A.Parser (Expr Bytes)
-p_string_atom = A.choice
+p_string_atom :: Parser (Expr Bytes)
+p_string_atom = choice
     [ from_string_field <$> p_field_name
-    , lookupRef b_rname <$  literal "RNAME"
-    , lookupRef  b_mrnm <$  literal "MRNM"
-    , lookupRef  b_mrnm <$  literal "RNEXT"
-    , get_library       <$  literal "library"
-    , get_sample        <$  literal "sample"
-    , pure              <$> p_string_lit ]
+    , lookupRef b_rname <$  reserved tp "RNAME"
+    , lookupRef  b_mrnm <$  reserved tp "MRNM"
+    , lookupRef  b_mrnm <$  reserved tp "RNEXT"
+    , get_library       <$  reserved tp "library"
+    , get_sample        <$  reserved tp "sample"
+    , pure . fromString <$> stringLiteral tp ]
   where
     from_string_field key = gets $ \br -> case lookup key (b_exts (unpackBam br)) of
             Just (Text x) -> x
@@ -292,7 +294,7 @@ p_string_atom = A.choice
 
     lookupRef f = asks snd >>= \m -> gets $ sq_name . getRef m . f . unpackBam
 
-    lookup_rg b = asks $ H.lookupDefault (B.empty,B.empty) (extAsString "RG" b) . fst
+    lookup_rg b = asks $ lookupDefault (B.empty,B.empty) (extAsString "RG" b) . fst
 
     get_library :: Expr Bytes
     get_library = do b <- gets unpackBam
@@ -303,8 +305,17 @@ p_string_atom = A.choice
     get_sample = gets unpackBam >>= fmap fst . lookup_rg
 
 
--- | String literal.  We'll need escapes, but for now this should do.
-p_string_lit :: A.Parser Bytes
-p_string_lit =     A.char '"' *> A.takeWhile (/='"') <* A.char '"' <* A.skipSpace
-               <|> A.char '\'' *> A.takeWhile (/='\'') <* A.char '\'' <* A.skipSpace
+tp :: GenTokenParser String u Identity
+tp = makeTokenParser $ LanguageDef
+    { commentStart    = ""
+    , commentEnd      = ""
+    , commentLine     = ""
+    , nestedComments  = False
+    , identStart      = letter
+    , identLetter     = alphaNum <|> char '-'
+    , opStart         = oneOf ":!#$%&*+./<=>?@\\^|-~"
+    , opLetter        = oneOf ":!#$%&*+./<=>?@\\^|-~"
+    , reservedNames   = [] -- Hmm.
+    , reservedOpNames = [] -- Hmm.
+    , caseSensitive   = True }
 
