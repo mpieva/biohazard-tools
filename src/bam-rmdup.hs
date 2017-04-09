@@ -265,10 +265,8 @@ collect_histogram = do
 writeHistogramFile :: FilePath -> U.Vector Int -> IO ()
 writeHistogramFile fp v = withFile fp WriteMode $ \hdl ->
     hPutBuilder hdl .
-    U.ifoldr (\i f b -> intDec i <> char7 '\t' <> doubleDec f <> char7 '\n' <> b) mempty .
-    U.map ((*) scale . fromIntegral) . U.reverse . U.dropWhile (==0) . U.reverse $ v
-  where
-    scale = recip . fromIntegral $ U.sum v
+    U.ifoldr (\i f b -> intDec i <> char7 '\t' <> intDec f <> char7 '\n' <> b) mempty .
+    U.reverse . U.dropWhile (==0) . U.reverse $ v
 
 -- | Counting reads:  we count total read in (ti), total reads out (to),
 -- good (confidently mapped) singletons out (gs), total good

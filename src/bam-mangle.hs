@@ -92,7 +92,7 @@ main = do
 
     case parse_str p_bool_expr expr of
         Left err -> hPrint stderr err >> exitFailure
-        Right f  -> mergeInputs combineCoordinates files >=> run $ \meta ->
+        Right f  -> concatInputs files >=> run $ \meta ->
                     joinI $ mapMaybeStream (runExpr f meta) $
                     joinI $ maybe (mapChunks id) takeStream (conf_limit conf) $
                     conf_output conf (add_pg meta)
@@ -233,7 +233,7 @@ isDeaminated b =
 -- double).  This includes:
 -- - tagged fields (default to 0 if missing or wrong type)
 -- - predefined fields: RNAME, POS, MRNM, MPOS, ISIZE, LENGTH, MAPQ
--- - mnemonic constants: wrongness, unexpectedness, rgquality
+-- - mnemonic constants: wrongness, unknownness, rgquality
 -- - literals
 
 p_num_atom :: Parser (Expr Double)

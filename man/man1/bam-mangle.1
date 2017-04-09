@@ -1,0 +1,243 @@
+.\" Process this file with
+.\" groff -man -Tascii bam-rmdup.1
+.\"
+.TH BAM-MANGLE 1 "APRIL 2017" Applications "User Manuals"
+.SH NAME
+bam-mangle \- flexible filtering of BAM files
+.SH SYNOPSIS
+
+.B bam-mangle
+[ options ] -e 
+.I expression
+[ \-\- ] file ...
+
+.B bam-mangle
+[ options ] [ \-\- ]
+.I expression
+file ...
+
+.SH DESCRIPTION
+.B bam-mangle
+reads one or more BAM files and outputs only those records for which the
+evaluation of an expression yields true.  Expressions can combine predicates
+defined on both the static fields of BAM and the optional tagged fields
+in flexible ways and can modify some fields in limited ways.
+
+.SH OPTIONS
+
+.IP "-o, --output file"
+Send compressed BAM output to
+.IR file .
+The default is to send uncompressed output to stdout.
+
+.IP "-S, --sam-pipe"
+Send SAM output to stdout.  This is good for debugging or for piping
+into a script that doesn't know how to read BAM itself.
+
+.IP "-n, ---numout, --limit num"
+Stop processing after
+.I num
+records passed the filter expression.
+
+.IP "-e, --expr expr"
+Evaluates
+.I expr
+on each record, and discard records where it evaluates to 
+.IR false .
+If
+.I -e
+is not given, the first non-option argument is taken as expression.  The
+.I expr
+argument frequently contains shell meta characters and should probably
+be quoted.
+
+.IP "-p, --print expr"
+Instead of outputtting BAM records, evaluates
+.I expr 
+on records passing the filter to either a string or a number and prints
+the result to stdout.
+
+.IP "-s, --sum expr"
+Instead of outputtting BAM records, evaluates
+.I expr 
+on records passing the filter to a number and sums the results.  The sum
+is printed to stdout after processing all inputs. 
+
+.IP "-h, -?, --help, --usage"
+Print usage information and exit.
+
+.IP "-V, --version"
+Print program version and exit.
+
+.SH EXPRESSION LANGUAGE
+
+One expression is evaluated in boolean context for each record to
+determine if it should be kept.  If the 
+.I -p 
+option is given, this expression is evaluated in numeric or string
+context to determine what to print.  If the
+.I -s
+option is given, this expression is evaluated in numeric context.
+
+.SS Atoms
+
+.IP Numeric Fields and Pseudo-Fields
+In numerical context, the fields
+.IR "RNAME" ", " "POS" ", " "MRNM" ", " "RNEXT" ", " "MPOS" ", "
+.IR "PNEXT" ", " "ISIZE" ", " "TLEN" " and " "MAPQ"
+evaluate to their respective values.  Positions are zero-based and
+reference sequences evaluate to their index.  In addition,
+.I LENGTH
+evaluates to the length of the
+.I SEQ
+field.
+
+The pseudo-fields 
+.IR unknownness ", " rgquality " and " wrongness
+evaluate to the values of
+.IR Z0 ", " Z1 " and " Z2
+if they are numeric, and have sensible defaults otherwise.  These allow
+for convenient filtering of the output of
+.IR deML .
+
+Two-letter tags evaluate to the value of the corresponding optional
+field if it is numeric.  Else they evaluate to zero.
+
+.IP String Fields and Pseudo-Fields
+In string context, the fields
+.IR "RNAME" ", " "MRNM" " and " "RNEXT"
+evaluate to their respective sequence names.
+
+The pseudo-field 
+.I library
+evaluates to the value of the 
+.I LB 
+tagged field if present, otherwise to the value of the
+.I LB
+attribute in the header for the read group named in the 
+.I RG
+tagged field.  The pseudo-field
+.I sample
+evaluates to the value of the 
+.I SM
+attribute in the header for the read group named in the 
+.I RG
+tagged field.
+
+Two-letter tags evaluate to the value of the corresponding optional
+field if it is string or character valued.  Else they evaluate to the
+empty string.
+
+
+.SS Boolean Primitives
+
+.IP "string1 ~ string2, string1 !~ string2"
+Returns true (false for 
+.IR !~ )
+iff 
+.I string1
+matches 
+.IR string2 ,
+which is interpreted as a posix regular expression.
+
+.IP "number1 op number2"
+The numbers are compared.  The allowed operators are
+.IR "==" ", " "!=" ", " "<" ", " ">" ", ", "<=" " and " ">=" ,
+with their expected interpretation
+
+.IP "defined field, isnum field, isstring field"
+These test whether 
+.IR field ,
+which should be a two letter tag, is present, of numeric value, and of
+string value, respectively.
+
+.IP Flags and Pseudo-Flags
+The flags defined for BAM
+.IR paired ", " "properly" ", " "unmapped" ", " "mate-unmapped" ", "
+.IR "reversed" ", " "mate-reversed" ", " "first-mate" ", " "second-mate" ", "
+.IR "auxillary" ", " "failed" " and " "duplicate"
+all evaluate to a boolean value.  In addition, the pseudo-flags
+.IR "trimmed" ", " "merged" " and " "vestigial"
+examine the
+.I FF
+tagged field and
+.IR "deaminated"
+examines the sequence and the 
+.I MD
+field for signatures of deamination. 
+
+.IP Modifiers
+The modifiers
+.IR "clear-failed" ", " "set-failed" ", " "set-trimmed" " and " "set-merged"
+modify the current record by setting or clearing the respective flag or
+pseudo-flag if and only if they are evaluated.  In conjunction with
+short-cut evaluation of boolean connectives, this can be used to
+selectively repair some flags that are usually broken by bad software.
+
+.SS Boolean Connectives
+
+.IP "expr1 && expr2"
+Evaluates 
+.I expr1 
+and if this yields true, returns true.  Else it returns the result of
+evaluating
+.IR expr2 .
+Importantly,
+.I expr2 
+is not evaluated unless neccessary.
+
+.IP "expr1 || expr2"
+Evaluates 
+.I expr1 
+and if this yields false, returns false.  Else it returns the result of
+evaluating
+.IR expr2 .
+Importantly,
+.I expr2 
+is not evaluated unless neccessary.
+
+.SH EXAMPLES
+.nf
+Keep reads that are unpaired or properly paired
+
+.ft B
+        bam-mangle -e 'properly || not paired'
+.ft R
+
+.nf 
+Discard reads that fail quality controls, unless the failure is only a
+wrong index combination
+
+.ft B
+        bam-mangle -e 'not failed || ZQ ~ "^W$"'
+.ft R
+
+.nf
+Same as last example, but additionally clear the failed flag
+
+.ft B
+        bam-mangle -e 'not failed || ZQ ~ "^W$" && clear-failed'
+.ft R
+
+.nf
+Print the library name of reads that are shorter than 30 base pairs
+
+.ft B
+        bam-mangle -e 'LEGNTH < 30' -p 'library'
+.ft R
+
+.nf
+Count the number of apparently deaminated reads in read group B0815 with
+mapping quality at least 25
+
+.ft B
+        bam-mangle -e 'MAPQ >= 25 && RG ~ "^B0815$" && deaminated' -s 1
+.ft R
+
+
+.SH AUTHOR
+Udo Stenzel <udo_stenzel@eva.mpg.de>
+
+.SH "SEE ALSO"
+.BR biohazard (7)
+
