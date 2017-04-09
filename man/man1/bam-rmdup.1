@@ -41,6 +41,16 @@ substituted.  The characters
 .IR '%%'
 will be replaced by a single percent sign.
 
+.IP "-H, --histogram file"
+Write a histogram of replication levels to
+.IR file .
+The histogram contains the number of reads seen once, twice, and so on
+up to reads seen a thousand fold.  The resulting file can be fed into 
+.IR preseq ,
+which can then extrapolate the number of additional distinct reads
+expected if sequencing is continued.  Note that the histogram is not
+read group aware.  
+
 .IP "-R, --refseq REF"
 Specify which parts of the input to read.  Selective reading requires an
 index file for the input.  It allows separate processing of individual
