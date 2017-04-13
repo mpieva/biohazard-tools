@@ -3,7 +3,7 @@
 -- extraction of data.  Simple expression language, comparable to Unix
 -- 'find', but not to 'awk'.
 
-import Bio.Adna                                 ( alnFromMd, NPair )
+import Bio.Adna                                 ( alnFromMd )
 import Bio.Bam                           hiding ( ParseError )
 import Bio.Prelude                       hiding ( try )
 import Control.Monad.Trans.RWS.Strict
@@ -166,7 +166,7 @@ p_bool_atom = choice
     , gets (isTrimmed        . unpackBam) <$ reserved tp "trimmed"
     , gets (isMerged         . unpackBam) <$ reserved tp "merged"
     , gets (isVestigial      . unpackBam) <$ reserved tp "vestigial"
-    , gets (isDeaminated     . unpackBam) <$ reserved tp "deaminated"
+    , const isDeaminated                 <$> reserved tp "deaminated" <*> natural tp
 
     , do_clearF <$ reserved tp "clear-failed"
     , do_setF   <$ reserved tp "set-failed"
@@ -215,18 +215,19 @@ p_bool_atom = choice
                                            b' = b { b_exts = updateE "FF" (Int (ff .|. f)) $ b_exts b }
                                        in if ff .|. f == ff then br else unsafePerformIO (packBam b'))
 
-isDeaminated :: BamRec -> Bool
-isDeaminated b | V.length (b_seq b) < 4 = False      -- stupid corner case, don't want to crash
-isDeaminated b =
+isDeaminated :: Integer -> Expr Bool
+isDeaminated nn = gets $ \br ->
+    case unpackBam br of { b ->
     case alnFromMd (b_seq b) (b_cigar b) <$> getMd b of
         Nothing  -> False
-        Just aln -> V.head aln == cg || V.head (V.tail aln) == cg ||
-                    V.last aln == cg || V.last (V.init aln) == cg ||
-                    V.last aln == ga || V.last (V.init aln) == ga
-  where
-    cg, ga :: NPair
-    cg = ( nucsC, nucsT )
-    ga = ( nucsG, nucsA )
+        Just aln -> V.any (== cg) (V.take n aln) ||
+                    V.any (== cg) (V.drop (l-n) aln) ||
+                    V.any (== ga) (V.drop (l-n) aln)
+          where
+            l  = V.length aln
+            n  = fromIntegral nn
+            cg = ( nucsC, nucsT )
+            ga = ( nucsG, nucsA ) }
 
 
 -- | Numeric-valued atoms (float or int, everything is converted to
