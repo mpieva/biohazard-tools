@@ -7,6 +7,9 @@ involving BAM files for Next Generation Sequencing data:
 * `bam-fixpair`: brings mates from paired end runs together and fixes
   their flags
 
+* `bam-mangle`: filters BAM files through a flexible boolean expression 
+  language.  A little bit like `awk` for BAM.
+
 * `bam-meld`: melds multiple BAM files together, retaining only the best
   alignment for each read
 
