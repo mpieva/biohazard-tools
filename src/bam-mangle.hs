@@ -61,12 +61,12 @@ options = [
         Right f_num -> return $ c { conf_output = \m -> foldStream (p m) 0 >>= liftIO . print  }
             where p m acc = (+) acc . fst . evalExpr f_num m
 
-    set_print e c = case parse_str (Left <$> p_num_atom <|> Right <$> p_string_atom) e of
+    set_print e c = case parse_str (Left <$> p_string_atom <|> Right <$> p_num_atom) e of
         Left           err  -> hPrint stderr err >> exitFailure
-        Right (Left  f_num) -> return $ c { conf_output = mapStreamM_ . p }
+        Right (Left  f_str) -> return $ c { conf_output = mapStreamM_ . p }
+            where p m = B.hPut stdout . (`B.snoc` 10) . fst . evalExpr f_str m
+        Right (Right f_num) -> return $ c { conf_output = mapStreamM_ . p }
             where p m = print . fst . evalExpr f_num m
-        Right (Right f_str) -> return $ c { conf_output = mapStreamM_ . p }
-            where p m = B.hPut stdout . fst . evalExpr f_str m
 
 type Parser a = Parsec String () a
 
@@ -125,13 +125,13 @@ p_bool_expr :: Parser (Expr Bool)
 p_bool_expr = (>>=)
     <$> p_bool_conj
     <*> option return
-          ((\y x -> if x then pure x else y) <$> (reserved tp "||" *> p_bool_expr))
+          ((\y x -> if x then pure x else y) <$> (reservedOp tp "||" *> p_bool_expr))
 
 p_bool_conj :: Parser (Expr Bool)
 p_bool_conj = (>>=)
     <$> p_bool_atom
     <*> option return
-          ((\y x -> if x then y else pure x) <$> (reserved tp "&&" *> p_bool_conj))
+          ((\y x -> if x then y else pure x) <$> (reservedOp tp "&&" *> p_bool_conj))
 
 -- | Boolean atoms:
 -- - string comparisons
@@ -144,44 +144,49 @@ p_bool_conj = (>>=)
 p_bool_atom :: Parser (Expr Bool)
 p_bool_atom = choice
     [ parens tp p_bool_expr
-    , pure True  <$ reserved tp "true"
-    , pure False <$ reserved tp "false"
-    , is_defined <$> (reserved tp "defined"  *> p_field_name)
-    , is_num     <$> (reserved tp "isnum"    *> p_field_name)
-    , is_string  <$> (reserved tp "isstring" *> p_field_name)
-    , fmap not   <$> (reserved tp "not" *> p_bool_atom)
-    , fmap not   <$> (reserved tp "!" *> p_bool_atom)
+    , fmap not     <$> (reservedOp tp "!"        *> p_bool_atom)
+    , is_defined   <$> (reserved tp "defined"    *> p_field_name)
+    , is_num       <$> (reserved tp "isnum"      *> p_field_name)
+    , is_string    <$> (reserved tp "isstring"   *> p_field_name)
+    , fmap not     <$> (reserved tp "not"        *> p_bool_atom)
+    , isDeaminated <$> (reserved tp "deaminated" *> natural tp)
 
-    , gets (isPaired         . unpackBam) <$ reserved tp "paired"
-    , gets (isProperlyPaired . unpackBam) <$ reserved tp "properly"
-    , gets (isUnmapped       . unpackBam) <$ reserved tp "unmapped"
-    , gets (isMateUnmapped   . unpackBam) <$ reserved tp "mate-unmapped"
-    , gets (isReversed       . unpackBam) <$ reserved tp "reversed"
-    , gets (isMateReversed   . unpackBam) <$ reserved tp "mate-reversed"
-    , gets (isFirstMate      . unpackBam) <$ reserved tp "first-mate"
-    , gets (isSecondMate     . unpackBam) <$ reserved tp "second-mate"
-    , gets (isAuxillary      . unpackBam) <$ reserved tp "auxillary"
-    , gets (isFailsQC        . unpackBam) <$ reserved tp "failed"
-    , gets (isDuplicate      . unpackBam) <$ reserved tp "duplicate"
-    , gets (isTrimmed        . unpackBam) <$ reserved tp "trimmed"
-    , gets (isMerged         . unpackBam) <$ reserved tp "merged"
-    , gets (isVestigial      . unpackBam) <$ reserved tp "vestigial"
-    , const isDeaminated                 <$> reserved tp "deaminated" <*> natural tp
-
-    , do_clearF <$ reserved tp "clear-failed"
-    , do_setF   <$ reserved tp "set-failed"
-    , setFF 1   <$ reserved tp "set-trimmed"
-    , setFF 2   <$ reserved tp "set-merged"
+    , named_predicate =<< identifier tp
 
     , try $ (\x o y -> liftA2 o x y) <$> p_string_atom <*> str_op <*> p_string_atom
     , try $ (\x o y -> liftA2 o x y) <$> p_num_atom    <*> num_op <*> p_num_atom ]
   where
+    named_predicate "true"  = return $ pure True
+    named_predicate "false" = return $ pure False
+
+    named_predicate "paired"       = return $ gets (isPaired         . unpackBam)
+    named_predicate "properly"     = return $ gets (isProperlyPaired . unpackBam)
+    named_predicate "unmapped"     = return $ gets (isUnmapped       . unpackBam)
+    named_predicate "mate-unmapped"= return $ gets (isMateUnmapped   . unpackBam)
+    named_predicate "reversed"     = return $ gets (isReversed       . unpackBam)
+    named_predicate "mate-reversed"= return $ gets (isMateReversed   . unpackBam)
+    named_predicate "first-mate"   = return $ gets (isFirstMate      . unpackBam)
+    named_predicate "second-mate"  = return $ gets (isSecondMate     . unpackBam)
+    named_predicate "auxillary"    = return $ gets (isAuxillary      . unpackBam)
+    named_predicate "failed"       = return $ gets (isFailsQC        . unpackBam)
+    named_predicate "duplicate"    = return $ gets (isDuplicate      . unpackBam)
+    named_predicate "trimmed"      = return $ gets (isTrimmed        . unpackBam)
+    named_predicate "merged"       = return $ gets (isMerged         . unpackBam)
+    named_predicate "vestigial"    = return $ gets (isVestigial      . unpackBam)
+
+    named_predicate "clear-failed" = return $ do_clearF
+    named_predicate "set-failed"   = return $ do_setF
+    named_predicate "set-trimmed"  = return $ setFF 1
+    named_predicate "set-merged"   = return $ setFF 2
+
+    named_predicate key = unexpected $ shows key ": I don't know what that is."
+
     num_op :: Parser (Double -> Double -> Bool)
-    num_op = choice [ (==) <$ reserved tp "==", (<=) <$ reserved tp "<=", (>=) <$ reserved tp ">="
-                    , (/=) <$ reserved tp "!=", (<)  <$ reserved tp  "<", (>)  <$ reserved tp  ">" ]
+    num_op = choice [ (==) <$ reservedOp tp "==", (<=) <$ reservedOp tp "<=", (>=) <$ reservedOp tp ">="
+                    , (/=) <$ reservedOp tp "!=", (<)  <$ reservedOp tp  "<", (>)  <$ reservedOp tp  ">" ]
 
     str_op :: Parser (Bytes -> Bytes -> Bool)
-    str_op = choice [ (=~) <$ reserved tp "~", (.) not . (=~) <$ reserved tp "!~" ]
+    str_op = choice [ (=~) <$ reservedOp tp "~", (.) not . (=~) <$ reservedOp tp "!~" ]
 
     is_num key = gets $ \br -> case lookup key (b_exts (unpackBam br)) of
             Just (Int   _) -> True
@@ -238,31 +243,34 @@ isDeaminated nn = gets $ \br ->
 -- - literals
 
 p_num_atom :: Parser (Expr Double)
-p_num_atom = choice
-    [ from_num_field                                       <$> p_field_name
-    , gets (fromIntegral . unRefseq . b_rname . unpackBam) <$  reserved tp "RNAME"
-    , gets (fromIntegral .              b_pos . unpackBam) <$  reserved tp "POS"
-    , gets (fromIntegral . unRefseq .  b_mrnm . unpackBam) <$  reserved tp "MRNM"
-    , gets (fromIntegral . unRefseq .  b_mrnm . unpackBam) <$  reserved tp "RNEXT"
-    , gets (fromIntegral .             b_mpos . unpackBam) <$  reserved tp "MPOS"
-    , gets (fromIntegral .             b_mpos . unpackBam) <$  reserved tp "PNEXT"
-    , gets (fromIntegral .            b_isize . unpackBam) <$  reserved tp "ISIZE"
-    , gets (fromIntegral .            b_isize . unpackBam) <$  reserved tp "TLEN"
-    , gets (fromIntegral . unQ .       b_mapq . unpackBam) <$  reserved tp "MAPQ"
-    , gets (fromIntegral . V.length .   b_seq . unpackBam) <$  reserved tp "LENGTH"
-
-    , gets (fromIntegral . extAsInt    0 "Z0" . unpackBam) <$  reserved tp "unknownness"
-    , gets (fromIntegral . extAsInt 9999 "Z1" . unpackBam) <$  reserved tp "rgquality"
-    , gets (fromIntegral . extAsInt    0 "Z2" . unpackBam) <$  reserved tp "wrongness"
-    , pure . either fromIntegral id                        <$> naturalOrFloat tp ]
+p_num_atom = ( pure . either fromIntegral id <$> naturalOrFloat tp )
+         <|> ( numeric_field                 =<< identifier tp )
   where
-    from_num_field key = gets $ \br -> case lookup key (b_exts (unpackBam br)) of
-            Just (Int   x) -> fromIntegral x
-            Just (Float x) -> float2Double x
-            _              -> 0
+    numeric_field "RNAME"       = return $ gets $ fromIntegral . unRefseq . b_rname . unpackBam
+    numeric_field "POS"         = return $ gets $ fromIntegral .              b_pos . unpackBam
+    numeric_field "MRNM"        = return $ gets $ fromIntegral . unRefseq .  b_mrnm . unpackBam
+    numeric_field "RNEXT"       = return $ gets $ fromIntegral . unRefseq .  b_mrnm . unpackBam
+    numeric_field "MPOS"        = return $ gets $ fromIntegral .             b_mpos . unpackBam
+    numeric_field "PNEXT"       = return $ gets $ fromIntegral .             b_mpos . unpackBam
+    numeric_field "ISIZE"       = return $ gets $ fromIntegral .            b_isize . unpackBam
+    numeric_field "TLEN"        = return $ gets $ fromIntegral .            b_isize . unpackBam
+    numeric_field "MAPQ"        = return $ gets $ fromIntegral . unQ .       b_mapq . unpackBam
+    numeric_field "LENGTH"      = return $ gets $ fromIntegral . V.length .   b_seq . unpackBam
+    numeric_field "LEN"         = return $ gets $ fromIntegral . V.length .   b_seq . unpackBam
 
--- reserved tp :: Bytes -> Parser ()
--- reserved tp key = A.string key *> spaces <?> unpack key
+    numeric_field "unknownness" = return $ gets $ fromIntegral . extAsInt    0 "Z0" . unpackBam
+    numeric_field "rgquality"   = return $ gets $ fromIntegral . extAsInt 9999 "Z1" . unpackBam
+    numeric_field "wrongness"   = return $ gets $ fromIntegral . extAsInt    0 "Z2" . unpackBam
+
+    numeric_field key
+        | length key /= 2       = unexpected $ shows key ": I don't know what that is."
+        | otherwise             = return $ gets $ \br ->
+            case lookup (fromString key) (b_exts (unpackBam br)) of
+                Just (Int   x) -> fromIntegral x
+                Just (Float x) -> float2Double x
+                _              -> 0
+
+
 
 -- | Parses name of a tagged field.  This is an alphabetic character
 -- followed by an alphanumeric character.
@@ -316,7 +324,7 @@ tp = makeTokenParser $ LanguageDef
     , identLetter     = alphaNum <|> char '-'
     , opStart         = oneOf ":!#$%&*+./<=>?@\\^|-~"
     , opLetter        = oneOf ":!#$%&*+./<=>?@\\^|-~"
-    , reservedNames   = [] -- Hmm.
-    , reservedOpNames = [] -- Hmm.
+    , reservedNames   = words "not defined isnum isstring deaminated"
+    , reservedOpNames = words "|| && > < >= <= == != ! ~ !~"
     , caseSensitive   = True }
 
