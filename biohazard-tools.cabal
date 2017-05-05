@@ -20,9 +20,6 @@ Extra-Source-Files:  man/man1/bam-fixpair.1
                      man/man1/bam-rmdup.1
                      man/man1/fastq2bam.1
 
-Data-Files:          index_db.json
-Data-Dir:            data
-
 Cabal-version:       >= 1.10
 Build-type:          Custom
 Tested-With:         GHC == 7.8.4, GHC == 7.10.1, GHC == 8.0.1
