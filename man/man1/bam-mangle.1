@@ -223,15 +223,16 @@ Same as last example, but additionally clear the failed flag
 Print the library name of reads that are shorter than 30 base pairs
 
 .ft B
-        bam-mangle -e 'LEGNTH < 30' -p 'library'
+        bam-mangle -e 'LENGTH < 30' -p 'library'
 .ft R
 
 .nf
-Count the number of apparently deaminated reads in read group B0815 with
+Count the number of apparently deaminated reads (showing a deamination
+signature in the first or last two bases) in read group B0815 with
 mapping quality at least 25
 
 .ft B
-        bam-mangle -e 'MAPQ >= 25 && RG ~ "^B0815$" && deaminated' -s 1
+        bam-mangle -e 'MAPQ >= 25 && RG ~ "^B0815$" && deaminated 2' -s 1
 .ft R
 
 
