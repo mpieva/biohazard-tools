@@ -151,10 +151,9 @@ p_bool_atom = choice
     , fmap not     <$> (reserved tp "not"        *> p_bool_atom)
     , isDeaminated <$> (reserved tp "deaminated" *> natural tp)
 
-    , named_predicate =<< identifier tp
-
     , try $ (\x o y -> liftA2 o x y) <$> p_string_atom <*> str_op <*> p_string_atom
-    , try $ (\x o y -> liftA2 o x y) <$> p_num_atom    <*> num_op <*> p_num_atom ]
+    , try $ (\x o y -> liftA2 o x y) <$> p_num_atom    <*> num_op <*> p_num_atom
+    , named_predicate =<< identifier tp ]
   where
     named_predicate "true"  = return $ pure True
     named_predicate "false" = return $ pure False
@@ -179,7 +178,7 @@ p_bool_atom = choice
     named_predicate "set-trimmed"  = return $ setFF 1
     named_predicate "set-merged"   = return $ setFF 2
 
-    named_predicate key = unexpected $ shows key ": I don't know what that is."
+    named_predicate key = unexpected $ shows key ": not a known predicate"
 
     num_op :: Parser (Double -> Double -> Bool)
     num_op = choice [ (==) <$ reservedOp tp "==", (<=) <$ reservedOp tp "<=", (>=) <$ reservedOp tp ">="
@@ -263,7 +262,7 @@ p_num_atom = ( pure . either fromIntegral id <$> naturalOrFloat tp )
     numeric_field "wrongness"   = return $ gets $ fromIntegral . extAsInt    0 "Z2" . unpackBam
 
     numeric_field key
-        | length key /= 2       = unexpected $ shows key ": I don't know what that is."
+        | length key /= 2       = unexpected $ shows key ": not a known numeric field"
         | otherwise             = return $ gets $ \br ->
             case lookup (fromString key) (b_exts (unpackBam br)) of
                 Just (Int   x) -> fromIntegral x
