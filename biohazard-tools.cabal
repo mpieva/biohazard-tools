@@ -31,8 +31,7 @@ source-repository head
 
 Executable bam-fixpair
   Main-is:             bam-fixpair.hs
-  Ghc-options:         -Wall -rtsopts -optl-static -optl-pthread
-  -- Ghc-options:         -Wall -threaded -rtsopts -with-rtsopts=-N
+  Ghc-options:         -Wall -rtsopts
   Default-Language:    Haskell2010
   Default-Extensions:  NoImplicitPrelude, OverloadedStrings,
                        BangPatterns, RecordWildCards, FlexibleContexts
@@ -51,8 +50,7 @@ Executable bam-fixpair
 
 Executable bam-mangle
   Main-is:             bam-mangle.hs
-  Ghc-options:         -Wall -rtsopts -optl-static -optl-pthread
-  -- Ghc-options:         -Wall -threaded -rtsopts -with-rtsopts=-N
+  Ghc-options:         -Wall -rtsopts
   Default-Language:    Haskell2010
   Default-Extensions:  NoImplicitPrelude, OverloadedStrings, BangPatterns
   Hs-Source-Dirs:      src
@@ -69,8 +67,7 @@ Executable bam-mangle
 
 Executable bam-meld
   Main-is:             bam-meld.hs
-  Ghc-options:         -Wall -rtsopts -optl-static -optl-pthread
-  -- Ghc-options:         -Wall -threaded -rtsopts -with-rtsopts=-N
+  Ghc-options:         -Wall -rtsopts
   Default-Language:    Haskell2010
   Default-Extensions:  NoImplicitPrelude, OverloadedStrings,
                        BangPatterns, FlexibleContexts
@@ -83,8 +80,7 @@ Executable bam-meld
 
 Executable bam-resample
   Main-is:             bam-resample.hs
-  Ghc-options:         -Wall -rtsopts -optl-static -optl-pthread
-  -- Ghc-options:         -Wall -threaded -rtsopts -with-rtsopts=-N
+  Ghc-options:         -Wall -rtsopts
   Default-Language:    Haskell2010
   Default-Extensions:  NoImplicitPrelude, OverloadedStrings, BangPatterns
   Hs-Source-Dirs:      src
@@ -96,8 +92,7 @@ Executable bam-resample
 
 Executable bam-rewrap
   Main-is:             bam-rewrap.hs
-  Ghc-options:         -Wall -rtsopts -optl-static -optl-pthread
-  -- Ghc-options:         -Wall -threaded -rtsopts -with-rtsopts=-N
+  Ghc-options:         -Wall -rtsopts
   Default-Language:    Haskell2010
   Default-Extensions:  NoImplicitPrelude, OverloadedStrings, BangPatterns
   Hs-Source-Dirs:      src
@@ -109,8 +104,7 @@ Executable bam-rewrap
 
 Executable bam-rmdup
   Main-is:             bam-rmdup.hs
-  Ghc-options:         -Wall -rtsopts -optl-static -optl-pthread
-  -- Ghc-options:         -Wall -threaded -rtsopts -with-rtsopts=-N
+  Ghc-options:         -Wall -rtsopts
   Default-Language:    Haskell2010
   Default-Extensions:  NoImplicitPrelude, OverloadedStrings,
                        BangPatterns, RecordWildCards, FlexibleContexts
@@ -125,8 +119,7 @@ Executable bam-rmdup
 
 Executable bam-trim
   Main-is:             bam-trim.hs
-  Ghc-options:         -Wall -rtsopts -optl-static -optl-pthread
-  -- Ghc-options:         -Wall -threaded -rtsopts -with-rtsopts=-N
+  Ghc-options:         -Wall -rtsopts
   Default-Language:    Haskell2010
   Default-Extensions:  NoImplicitPrelude, OverloadedStrings, BangPatterns
   Hs-Source-Dirs:      src
@@ -137,8 +130,7 @@ Executable bam-trim
 
 Executable fastq2bam
   Main-is:             fastq2bam.hs
-  Ghc-options:         -Wall -rtsopts -optl-static -optl-pthread
-  -- Ghc-options:         -Wall -threaded -rtsopts -with-rtsopts=-N
+  Ghc-options:         -Wall -rtsopts
   Default-Language:    Haskell2010
   Default-Extensions:  NoImplicitPrelude, OverloadedStrings, BangPatterns
   Hs-Source-Dirs:      src
