@@ -40,7 +40,7 @@ Executable bam-fixpair
   Build-depends:       async                    >= 2.0 && < 2.2,
                        base                     >= 4.6 && < 4.10,
                        binary                   >= 0.7 && < 0.9,
-                       biohazard                >= 0.6.14 && < 0.7,
+                       biohazard                >= 0.6.15 && < 0.7,
                        bytestring               >= 0.10.2 && < 0.11,
                        process                  >= 1.0 && < 1.5,
                        stm                      == 2.4.*,
@@ -56,7 +56,7 @@ Executable bam-mangle
   Hs-Source-Dirs:      src
   Other-modules:       Paths_biohazard_tools
   Build-depends:       base                     >= 4.6 && < 4.10,
-                       biohazard                >= 0.6.14 && < 0.7,
+                       biohazard                >= 0.6.15 && < 0.7,
                        bytestring               >= 0.10.2 && < 0.11,
                        parsec                   == 3.*,
                        random                   >= 1.0 && < 1.2,
@@ -74,7 +74,7 @@ Executable bam-meld
   Hs-Source-Dirs:      src
   Other-modules:       Paths_biohazard_tools
   Build-depends:       base                     >= 4.6 && < 4.10,
-                       biohazard                >= 0.6.14 && < 0.7,
+                       biohazard                >= 0.6.15 && < 0.7,
                        bytestring               >= 0.10.2 && < 0.11,
                        containers               >= 0.4.1 && < 0.6
 
@@ -86,7 +86,7 @@ Executable bam-resample
   Hs-Source-Dirs:      src
   Other-modules:       Paths_biohazard_tools
   Build-depends:       base                     >= 4.6 && < 4.10,
-                       biohazard                >= 0.6.14 && < 0.7,
+                       biohazard                >= 0.6.15 && < 0.7,
                        bytestring               >= 0.10.2 && < 0.11,
                        random                   >= 1.0 && < 1.2
 
@@ -98,7 +98,7 @@ Executable bam-rewrap
   Hs-Source-Dirs:      src
   Other-modules:       Paths_biohazard_tools
   Build-depends:       base                     >= 4.6 && < 4.10,
-                       biohazard                >= 0.6.14 && < 0.7,
+                       biohazard                >= 0.6.15 && < 0.7,
                        bytestring               >= 0.10.2 && < 0.11,
                        containers               >= 0.4.1 && < 0.6
 
@@ -111,7 +111,7 @@ Executable bam-rmdup
   Hs-Source-Dirs:      src
   Other-modules:       Paths_biohazard_tools
   Build-depends:       base                     >= 4.6 && < 4.10,
-                       biohazard                >= 0.6.14 && < 0.7,
+                       biohazard                >= 0.6.15 && < 0.7,
                        bytestring               >= 0.10.2 && < 0.11,
                        containers               >= 0.4.1 && < 0.6,
                        unordered-containers     >= 0.2.3 && < 0.3,
@@ -125,7 +125,7 @@ Executable bam-trim
   Hs-Source-Dirs:      src
   Other-modules:       Paths_biohazard_tools
   Build-depends:       base                     >= 4.6 && < 4.10,
-                       biohazard                >= 0.6.14 && < 0.7,
+                       biohazard                >= 0.6.15 && < 0.7,
                        bytestring               >= 0.10.2 && < 0.11
 
 Executable fastq2bam
@@ -136,7 +136,7 @@ Executable fastq2bam
   Hs-Source-Dirs:      src
   Other-modules:       Paths_biohazard_tools
   Build-depends:       base                     >= 4.6 && < 4.10,
-                       biohazard                >= 0.6.14 && < 0.7,
+                       biohazard                >= 0.6.15 && < 0.7,
                        bytestring               >= 0.10.2 && < 0.11,
                        containers               >= 0.4.1 && < 0.6,
                        vector                   >= 0.10 && < 0.13

@@ -171,7 +171,8 @@ p_bool_atom = choice
     named_predicate "duplicate"    = return $ gets (isDuplicate      . unpackBam)
     named_predicate "trimmed"      = return $ gets (isTrimmed        . unpackBam)
     named_predicate "merged"       = return $ gets (isMerged         . unpackBam)
-    named_predicate "vestigial"    = return $ gets (isVestigial      . unpackBam)
+    named_predicate "alternative"  = return $ gets (isAlternative    . unpackBam)
+    named_predicate "exact-index"  = return $ gets (isExactIndex     . unpackBam)
 
     named_predicate "clear-failed" = return $ do_clearF
     named_predicate "set-failed"   = return $ do_setF
