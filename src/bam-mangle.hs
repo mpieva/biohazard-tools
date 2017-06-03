@@ -5,19 +5,19 @@
 
 import Bio.Adna                                 ( alnFromMd )
 import Bio.Bam                           hiding ( ParseError )
-import Bio.Prelude                       hiding ( try )
+import Bio.Prelude                       hiding ( try, many )
 import Control.Monad.Trans.RWS.Strict
-import Data.Functor.Identity                    ( Identity )
 import Data.HashMap.Strict                      ( lookupDefault, fromList )
 import GHC.Float                                ( float2Double )
 import Paths_biohazard_tools                    ( version )
 import System.Console.GetOpt
 import Text.Parsec                       hiding ( (<|>) )
-import Text.Parsec.Token
+import Text.Parsec.Language                     ( emptyDef )
 import Text.Regex.Posix                         ( (=~) )
 
 import qualified Data.ByteString                  as B
 import qualified Data.Vector.Generic              as V
+import qualified Text.Parsec.Token                as P
 
 data Conf = Conf
     { conf_output :: BamMeta -> Iteratee [BamRaw] IO ()
@@ -43,7 +43,7 @@ options = [
     set_output  fp c = return $ c { conf_output = writeBamFile fp }
     set_sam_output c = return $ c { conf_output = joinI . mapStream unpackBam . pipeSamOutput }
     set_expr     s c = return $ c { conf_expr   = Just s }
-    set_limit    a c = readIO a >>= \l -> return $ c { conf_limit = Just l }
+    set_limit    a c =   (\l -> c { conf_limit  = Just l }) <$> readIO a
 
     disp_version _ = do pn <- getProgName
                         hPutStrLn stderr $ pn ++ ", version " ++ showVersion version
@@ -72,12 +72,12 @@ type Parser a = Parsec String () a
 
 -- The plan:  We take a filter expression and a number of input files.  Inputs
 -- are merged, if that doesn't make sense, use only one.  The expression
--- evaluates to a bool, we filter on the result.  We can take a second
+-- evaluates to a 'Bool', we filter on the result.  We can take a second
 -- expression to extract some data, which we may want to sum up.  Where
 -- do we put the few modifying functions?
 
 parse_str :: Parser a -> String -> Either ParseError a
-parse_str p = parse (whiteSpace tp *> p <* eof) ""
+parse_str p = parse (spaces *> p <* eof) ""
 
 main :: IO ()
 main = do
@@ -98,8 +98,8 @@ main = do
                     conf_output conf (add_pg meta)
 
 
--- | We compile an expression of type a to a Haskell function that takes
--- a BamHeader, a BamRaw, and returns an a.
+-- | We compile an expression of type \"a\" to a Haskell function that
+-- takes a BamHeader, a BamRaw, and returns an \"a\".
 type Expr = RWS (RGData,Refs) () BamRaw
 type RGData = HashMap Bytes (Bytes,Bytes)
 
@@ -122,16 +122,14 @@ evalExpr e m = unp . runRWS e (rgs, meta_refs m)
                     , ("SM", sm) <- stuff ]
 
 p_bool_expr :: Parser (Expr Bool)
-p_bool_expr = (>>=)
-    <$> p_bool_conj
-    <*> option return
-          ((\y x -> if x then pure x else y) <$> (reservedOp tp "||" *> p_bool_expr))
+p_bool_expr = chainl1 p_bool_conj (orE <$  operator "||")
+  where
+    orE x y = x >>= \e -> if e then pure True else y
 
 p_bool_conj :: Parser (Expr Bool)
-p_bool_conj = (>>=)
-    <$> p_bool_atom
-    <*> option return
-          ((\y x -> if x then y else pure x) <$> (reservedOp tp "&&" *> p_bool_conj))
+p_bool_conj = chainl1 p_bool_atom (andE <$ operator "&&")
+  where
+    andE x y = x >>= \e -> if e then y else pure False
 
 -- | Boolean atoms:
 -- - string comparisons
@@ -143,36 +141,41 @@ p_bool_conj = (>>=)
 
 p_bool_atom :: Parser (Expr Bool)
 p_bool_atom = choice
-    [ parens tp p_bool_expr
-    , fmap not     <$> (reservedOp tp "!"        *> p_bool_atom)
-    , is_defined   <$> (reserved tp "defined"    *> p_field_name)
-    , is_num       <$> (reserved tp "isnum"      *> p_field_name)
-    , is_string    <$> (reserved tp "isstring"   *> p_field_name)
-    , fmap not     <$> (reserved tp "not"        *> p_bool_atom)
-    , isDeaminated <$> (reserved tp "deaminated" *> natural tp)
+    [ char '(' *> spaces *> p_bool_expr <* char ')' <* spaces
+    , fmap not     <$> (operator "!"          *> p_bool_atom)
+    , is_defined   <$> (reserved "defined"    *> p_field_name)
+    , is_num       <$> (reserved "isnum"      *> p_field_name)
+    , is_string    <$> (reserved "isstring"   *> p_field_name)
+    , fmap not     <$> (reserved "not"        *> p_bool_atom)
+    , isDeaminated <$> (reserved "deaminated" *> natural)
 
     , try $ (\x o y -> liftA2 o x y) <$> p_string_atom <*> str_op <*> p_string_atom
     , try $ (\x o y -> liftA2 o x y) <$> p_num_atom    <*> num_op <*> p_num_atom
-    , named_predicate =<< identifier tp ]
+    , named_predicate =<< identifier ]
   where
+    getF f = return $ gets $ f . unpackBam
+
     named_predicate "true"  = return $ pure True
     named_predicate "false" = return $ pure False
 
-    named_predicate "paired"       = return $ gets (isPaired         . unpackBam)
-    named_predicate "properly"     = return $ gets (isProperlyPaired . unpackBam)
-    named_predicate "unmapped"     = return $ gets (isUnmapped       . unpackBam)
-    named_predicate "mate-unmapped"= return $ gets (isMateUnmapped   . unpackBam)
-    named_predicate "reversed"     = return $ gets (isReversed       . unpackBam)
-    named_predicate "mate-reversed"= return $ gets (isMateReversed   . unpackBam)
-    named_predicate "first-mate"   = return $ gets (isFirstMate      . unpackBam)
-    named_predicate "second-mate"  = return $ gets (isSecondMate     . unpackBam)
-    named_predicate "auxillary"    = return $ gets (isAuxillary      . unpackBam)
-    named_predicate "failed"       = return $ gets (isFailsQC        . unpackBam)
-    named_predicate "duplicate"    = return $ gets (isDuplicate      . unpackBam)
-    named_predicate "trimmed"      = return $ gets (isTrimmed        . unpackBam)
-    named_predicate "merged"       = return $ gets (isMerged         . unpackBam)
-    named_predicate "alternative"  = return $ gets (isAlternative    . unpackBam)
-    named_predicate "exact-index"  = return $ gets (isExactIndex     . unpackBam)
+    named_predicate "paired"       = getF isPaired
+    named_predicate "properly"     = getF isProperlyPaired
+    named_predicate "unmapped"     = getF isUnmapped
+    named_predicate "mapped"       = getF $ not . isUnmapped
+    named_predicate "mate-unmapped"= getF isMateUnmapped
+    named_predicate "mate-mapped"  = getF $ not . isMateUnmapped
+    named_predicate "reversed"     = getF isReversed
+    named_predicate "mate-reversed"= getF isMateReversed
+    named_predicate "first-mate"   = getF isFirstMate
+    named_predicate "second-mate"  = getF isSecondMate
+    named_predicate "auxillary"    = getF isAuxillary
+    named_predicate "failed"       = getF isFailsQC
+    named_predicate "good"         = getF $ not . isFailsQC
+    named_predicate "duplicate"    = getF isDuplicate
+    named_predicate "trimmed"      = getF isTrimmed
+    named_predicate "merged"       = getF isMerged
+    named_predicate "alternative"  = getF isAlternative
+    named_predicate "exact-index"  = getF isExactIndex
 
     named_predicate "clear-failed" = return $ do_clearF
     named_predicate "set-failed"   = return $ do_setF
@@ -182,11 +185,11 @@ p_bool_atom = choice
     named_predicate key = unexpected $ shows key ": not a known predicate"
 
     num_op :: Parser (Double -> Double -> Bool)
-    num_op = choice [ (==) <$ reservedOp tp "==", (<=) <$ reservedOp tp "<=", (>=) <$ reservedOp tp ">="
-                    , (/=) <$ reservedOp tp "!=", (<)  <$ reservedOp tp  "<", (>)  <$ reservedOp tp  ">" ]
+    num_op = choice [ (==) <$ operator "==", (<=) <$ operator "<=", (>=) <$ operator ">="
+                    , (/=) <$ operator "!=", (<)  <$ operator  "<", (>)  <$ operator  ">" ]
 
     str_op :: Parser (Bytes -> Bytes -> Bool)
-    str_op = choice [ (=~) <$ reservedOp tp "~", (.) not . (=~) <$ reservedOp tp "!~" ]
+    str_op = choice [ (=~) <$ operator "~", (.) not . (=~) <$ operator "!~" ]
 
     is_num key = gets $ \br -> case lookup key (b_exts (unpackBam br)) of
             Just (Int   _) -> True
@@ -220,17 +223,16 @@ p_bool_atom = choice
                                            b' = b { b_exts = updateE "FF" (Int (ff .|. f)) $ b_exts b }
                                        in if ff .|. f == ff then br else unsafePerformIO (packBam b'))
 
-isDeaminated :: Integer -> Expr Bool
-isDeaminated nn = gets $ \br ->
+isDeaminated :: Int -> Expr Bool
+isDeaminated n = gets $ \br ->
     case unpackBam br of { b ->
     case alnFromMd (b_seq b) (b_cigar b) <$> getMd b of
         Nothing  -> False
-        Just aln -> V.any (== cg) (V.take n aln) ||
+        Just aln -> V.any (== cg) (V.take    n  aln) ||
                     V.any (== cg) (V.drop (l-n) aln) ||
                     V.any (== ga) (V.drop (l-n) aln)
           where
             l  = V.length aln
-            n  = fromIntegral nn
             cg = ( nucsC, nucsT )
             ga = ( nucsG, nucsA ) }
 
@@ -243,24 +245,26 @@ isDeaminated nn = gets $ \br ->
 -- - literals
 
 p_num_atom :: Parser (Expr Double)
-p_num_atom = ( pure . either fromIntegral id <$> naturalOrFloat tp )
-         <|> ( numeric_field                 =<< identifier tp )
+p_num_atom = ( pure . either fromIntegral id <$> naturalOrFloat )
+         <|> ( numeric_field                 =<< identifier )
   where
-    numeric_field "RNAME"       = return $ gets $ fromIntegral . unRefseq . b_rname . unpackBam
-    numeric_field "POS"         = return $ gets $ fromIntegral .              b_pos . unpackBam
-    numeric_field "MRNM"        = return $ gets $ fromIntegral . unRefseq .  b_mrnm . unpackBam
-    numeric_field "RNEXT"       = return $ gets $ fromIntegral . unRefseq .  b_mrnm . unpackBam
-    numeric_field "MPOS"        = return $ gets $ fromIntegral .             b_mpos . unpackBam
-    numeric_field "PNEXT"       = return $ gets $ fromIntegral .             b_mpos . unpackBam
-    numeric_field "ISIZE"       = return $ gets $ fromIntegral .            b_isize . unpackBam
-    numeric_field "TLEN"        = return $ gets $ fromIntegral .            b_isize . unpackBam
-    numeric_field "MAPQ"        = return $ gets $ fromIntegral . unQ .       b_mapq . unpackBam
-    numeric_field "LENGTH"      = return $ gets $ fromIntegral . V.length .   b_seq . unpackBam
-    numeric_field "LEN"         = return $ gets $ fromIntegral . V.length .   b_seq . unpackBam
+    getF f = return $ gets $ fromIntegral . f . unpackBam
 
-    numeric_field "unknownness" = return $ gets $ fromIntegral . extAsInt    0 "Z0" . unpackBam
-    numeric_field "rgquality"   = return $ gets $ fromIntegral . extAsInt 9999 "Z1" . unpackBam
-    numeric_field "wrongness"   = return $ gets $ fromIntegral . extAsInt    0 "Z2" . unpackBam
+    numeric_field "RNAME"       = getF $ unRefseq . b_rname
+    numeric_field "POS"         = getF $              b_pos
+    numeric_field "MRNM"        = getF $ unRefseq .  b_mrnm
+    numeric_field "RNEXT"       = getF $ unRefseq .  b_mrnm
+    numeric_field "MPOS"        = getF $             b_mpos
+    numeric_field "PNEXT"       = getF $             b_mpos
+    numeric_field "ISIZE"       = getF $            b_isize
+    numeric_field "TLEN"        = getF $            b_isize
+    numeric_field "MAPQ"        = getF $ unQ .       b_mapq
+    numeric_field "LENGTH"      = getF $ V.length .   b_seq
+    numeric_field "LEN"         = getF $ V.length .   b_seq
+
+    numeric_field "unknownness" = getF $ extAsInt    0 "Z0"
+    numeric_field "rgquality"   = getF $ extAsInt 9999 "Z1"
+    numeric_field "wrongness"   = getF $ extAsInt    0 "Z2"
 
     numeric_field key
         | length key /= 2       = unexpected $ shows key ": not a known numeric field"
@@ -275,7 +279,7 @@ p_num_atom = ( pure . either fromIntegral id <$> naturalOrFloat tp )
 -- | Parses name of a tagged field.  This is an alphabetic character
 -- followed by an alphanumeric character.
 p_field_name :: Parser BamKey
-p_field_name = do nm <- identifier tp -- a <- letter
+p_field_name = do nm <- identifier
                   guard (length nm == 2)
                   return $ fromString nm
     <?> "2-letter tag"
@@ -283,17 +287,17 @@ p_field_name = do nm <- identifier tp -- a <- letter
 -- | String-valued atoms.  This includes:
 -- - tagged fields (default to "" if missing or wrong type)
 -- - predefined fields: RNAME, MRNM
--- - convenience functions:  library?
+-- - convenience functions:  library, sample
 -- - literals
 p_string_atom :: Parser (Expr Bytes)
 p_string_atom = choice
-    [ from_string_field <$> p_field_name
-    , lookupRef b_rname <$  reserved tp "RNAME"
-    , lookupRef  b_mrnm <$  reserved tp "MRNM"
-    , lookupRef  b_mrnm <$  reserved tp "RNEXT"
-    , get_library       <$  reserved tp "library"
-    , get_sample        <$  reserved tp "sample"
-    , pure . fromString <$> stringLiteral tp ]
+    [ lookupRef b_rname <$  reserved "RNAME"
+    , lookupRef  b_mrnm <$  reserved "MRNM"
+    , lookupRef  b_mrnm <$  reserved "RNEXT"
+    , get_library       <$  reserved "library"
+    , get_sample        <$  reserved "sample"
+    , from_string_field <$> p_field_name
+    , pure . fromString <$> stringLiteral ]
   where
     from_string_field key = gets $ \br -> case lookup key (b_exts (unpackBam br)) of
             Just (Text x) -> x
@@ -314,17 +318,27 @@ p_string_atom = choice
     get_sample = gets unpackBam >>= fmap fst . lookup_rg
 
 
-tp :: GenTokenParser String u Identity
-tp = makeTokenParser $ LanguageDef
-    { commentStart    = ""
-    , commentEnd      = ""
-    , commentLine     = ""
-    , nestedComments  = False
-    , identStart      = letter
-    , identLetter     = alphaNum <|> char '-'
-    , opStart         = oneOf ":!#$%&*+./<=>?@\\^|-~"
-    , opLetter        = oneOf ":!#$%&*+./<=>?@\\^|-~"
-    , reservedNames   = words "not defined isnum isstring deaminated"
-    , reservedOpNames = words "|| && > < >= <= == != ! ~ !~"
-    , caseSensitive   = True }
+operator :: String -> Parser ()
+operator nm = try (do cs <- many1 (oneOf ":!#$%&*+./<=>?@\\^|-~")
+                      guard $ cs == nm
+                      spaces)
+              <?> show nm
 
+reserved :: String -> Parser ()
+reserved nm = try (do c <- letter
+                      cs <- many (alphaNum <|> char '-')
+                      guard $ c:cs == nm
+                      spaces)
+              <?> show nm
+
+identifier :: Parser String
+identifier = (:) <$> letter <*> many (alphaNum <|> char '-') <* spaces
+
+natural :: Parser Int
+natural = foldl' (\a c -> 10*a + digitToInt c) 0 <$> many1 digit <* spaces <?> "natural number"
+
+naturalOrFloat :: Parser (Either Integer Double)
+naturalOrFloat = P.naturalOrFloat (P.makeTokenParser emptyDef) <?> "number"
+
+stringLiteral :: Parser String
+stringLiteral  = P.stringLiteral  (P.makeTokenParser emptyDef) <?> "string"
