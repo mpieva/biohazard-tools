@@ -29,8 +29,9 @@ source-repository head
   location: https://bitbucket.org/ustenzel/biohazard-tools.git
 
 
-Executable test
-  Main-is:             test.hs
+Test-suite bam-sort
+  Type:                exitcode-stdio-1.0
+  Main-is:             bam-sort.hs
   Ghc-options:         -Wall -rtsopts
   Default-Language:    Haskell2010
   Default-Extensions:  NoImplicitPrelude, OverloadedStrings,
@@ -42,7 +43,6 @@ Executable test
                        binary                   >= 0.7 && < 0.9,
                        biohazard                >= 0.6.15 && < 0.7,
                        bytestring               >= 0.10.2 && < 0.11,
-                       random,
                        snappy                   == 0.2.*,
                        unix                     >= 2.5 && < 2.8
 

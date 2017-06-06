@@ -9,10 +9,20 @@ module PriorityQueue (
         viewMinPQ,
         sizePQ,
         listToPQ,
-        pqToList
+        pqToList,
+
+        ByQName(..),
+        byQName,
+        ByMatePos(..),
+        BySelfPos(..),
+        br_qname,
+        br_mate_pos,
+        br_self_pos,
+        br_copy
 ) where
 
 import Bio.Prelude
+import Bio.Bam                   hiding ( Stream )
 import Codec.Compression.Snappy         ( compress, decompress )
 import Data.Binary                      ( Binary, get, put )
 import Data.Binary.Get                  ( runGetOrFail )
@@ -143,14 +153,16 @@ flushPQ cfg PQ{..} = do
 spillTo :: (Ord a, Sized a) => PQ_Conf -> Int -> [a] -> [( Fd, SkewHeap (Stream a) )] -> IO [( Fd, SkewHeap (Stream a) )]
 spillTo cfg g as [                         ] = mkEmptySpill cfg >>= spillTo cfg g as . (:[])
 spillTo cfg g as (( fd, streams ) : spills ) = do
-    croak cfg $ "Spilling gen " ++ shows g " to gen " ++ shows (succ g) "."
     str <- externalize fd . runPut . foldMap put $ as
-    croak cfg $ "Gen " ++ shows (succ g) " has " ++ shows (sizeH streams) " streams (fd " ++ shows fd ")."
     let streams' = insertH (decodeStream str) streams
+    pos <- fdSeek fd RelativeSeek 0
+    croak cfg $ "Gen " ++ shows g " has " ++ shows (sizeH streams') " streams (fd "
+             ++ shows fd ", " ++ shows (pos `shiftR` 20) "MB)."
     if sizeH streams' == max_merge cfg
-      then (:) <$> mkEmptySpill cfg
-               <*> spillTo cfg (succ g) (unfoldr viewMinS streams') spills
-               <*  closeFd fd
+      then do croak cfg $ "Spilling gen " ++ shows g " to gen " ++ shows (succ g) "."
+              (:) <$> mkEmptySpill cfg
+                  <*> spillTo cfg (succ g) (unfoldr viewMinS streams') spills
+                  <*  closeFd fd
       else return (( fd, streams' ) : spills )
 
 mkEmptySpill :: PQ_Conf -> IO ( Fd, SkewHeap (Stream a) )
@@ -306,3 +318,61 @@ unsnappy s = let l = fromIntegral (L.index s 0) .|.
              in L.Chunk (decompress (L.toStrict (L.take l (L.drop 2 s))))
                         (unsnappy (L.drop (l+2) s))
 
+
+data ByQName = ByQName { _bq_hash :: !Int
+                       , _bq_alnid :: !Int
+                       , _bq_rec :: !BamRaw }
+
+-- Note on XI:  this is *not* the index read (MPI EVAN convention), but
+-- the number of the alignment (Segemehl convention, I believe).
+-- Fortunately, the index is never numeric, so this is reasonably safe.
+byQName :: BamRaw -> ByQName
+byQName b = ByQName (hash $ br_qname b) (extAsInt 0 "XI" $ unpackBam b) b
+
+instance Eq ByQName where
+    ByQName ah ai a == ByQName bh bi b =
+        (ah, ai, br_qname a) == (bh, bi, br_qname b)
+
+instance Ord ByQName where
+    ByQName ah ai a `compare` ByQName bh bi b =
+        (ah, ai, b_qname (unpackBam a)) `compare` (bh, bi, b_qname (unpackBam b))
+
+newtype ByMatePos = ByMatePos BamRaw
+
+instance Eq ByMatePos where
+    ByMatePos a == ByMatePos b =
+        br_mate_pos a == br_mate_pos b
+
+instance Ord ByMatePos where
+    ByMatePos a `compare` ByMatePos b =
+        br_mate_pos a `compare` br_mate_pos b
+
+newtype BySelfPos = BySelfPos BamRaw
+
+instance Eq BySelfPos where
+    BySelfPos a == BySelfPos b =
+        br_self_pos a == br_self_pos b
+
+instance Ord BySelfPos where
+    BySelfPos a `compare` BySelfPos b =
+        br_self_pos a `compare` br_self_pos b
+
+instance Binary ByQName   where put (ByQName _ _ r) = put (raw_data r) ; get = byQName   . bamRaw 0 <$> get
+instance Binary ByMatePos where put (ByMatePos   r) = put (raw_data r) ; get = ByMatePos . bamRaw 0 <$> get
+instance Binary BySelfPos where put (BySelfPos   r) = put (raw_data r) ; get = BySelfPos . bamRaw 0 <$> get
+
+instance Sized ByQName   where usedBytes (ByQName _ _ r) = S.length (raw_data r) + 80
+instance Sized ByMatePos where usedBytes (ByMatePos   r) = S.length (raw_data r) + 64
+instance Sized BySelfPos where usedBytes (BySelfPos   r) = S.length (raw_data r) + 64
+
+br_qname :: BamRaw -> Seqid
+br_qname = b_qname . unpackBam
+
+br_mate_pos :: BamRaw -> (Refseq, Int)
+br_mate_pos = (b_mrnm &&& b_mpos) . unpackBam
+
+br_self_pos :: BamRaw -> (Refseq, Int)
+br_self_pos = (b_rname &&& b_pos) . unpackBam
+
+br_copy :: BamRaw -> BamRaw
+br_copy br = bamRaw (virt_offset br) $! S.copy (raw_data br)

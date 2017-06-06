@@ -23,8 +23,7 @@ In the end, the code will work...
 
 TODO:
  . a companion program that sorts would be cool, but it should be an
-   opportunistic sort that is fast on almost sorted files.
- . the parameters for the 'PQ's need to be configurable.
+   opportunistic sort that is fast on almost sorted files. (How?)
 -}
 
 import Bio.Bam                           hiding ( mergeInputs, combineCoordinates )
@@ -33,7 +32,6 @@ import Bio.Util.Numeric                         ( showNum )
 import Control.Concurrent.Async
 import Control.Concurrent.STM.TQueue
 import Control.Concurrent.STM.TVar
-import Data.Binary
 import Paths_biohazard_tools                    ( version )
 import PriorityQueue
 import System.Console.GetOpt
@@ -69,34 +67,38 @@ config0 = return $ CF True True False True False True Errors KillNone
 
 options :: [OptDescr (Config -> IO Config)]
 options = [
-    Option "o" ["output"]       (ReqArg set_output "FILE") "Write output to FILE",
-    Option "X" ["exec"]                    (NoArg  return) "Send FastQ output to a program",
-    Option "n" ["dry-run","validate"] (NoArg set_validate) "No output, validate only",
-    Option "k" ["kill-widows"] (NoArg (\c -> return $ c { killmode = KillAll })) "Delete all widows",
-    Option "u" ["kill-unmapped"](NoArg (\c -> return $ c { killmode = KillUu })) "Delete unmapped widows",
-    Option [ ] ["kill-none"]  (NoArg (\c -> return $ c { killmode = KillNone })) "Never delete widows (default)",
+    Option "o" ["output"]                                  (ReqArg set_output "FILE") "Write output to FILE",
+    Option "X" ["exec"]                                    (NoArg             return) "Send FastQ output to a program",
+    Option "n" ["dry-run","validate"]                      (NoArg       set_validate) "No output, validate only",
+    Option "k" ["kill-widows"]     (NoArg (\c -> return $ c { killmode =  KillAll })) "Delete all widows",
+    Option "u" ["kill-unmapped"]   (NoArg (\c -> return $ c { killmode =   KillUu })) "Delete unmapped widows",
+    Option [ ] ["kill-none"]       (NoArg (\c -> return $ c { killmode = KillNone })) "Never delete widows (default)",
 
-    Option "v" ["verbose"]  (NoArg (\c -> return $ c { verbosity = Notices  })) "Print informational messages",
-    Option "w" ["warnings"] (NoArg (\c -> return $ c { verbosity = Warnings })) "Print warnings and errors",
-    Option [ ] ["errors"]   (NoArg (\c -> return $ c { verbosity = Errors   })) "Print only errors (default)",
-    Option "q" ["quiet"]    (NoArg (\c -> return $ c { verbosity = Silent   })) "Print only fatal errors",
+    Option "v" ["verbose"]        (NoArg (\c -> return $ c { verbosity = Notices  })) "Print informational messages",
+    Option "w" ["warnings"]       (NoArg (\c -> return $ c { verbosity = Warnings })) "Print warnings and errors",
+    Option [ ] ["errors"]         (NoArg (\c -> return $ c { verbosity = Errors   })) "Print only errors (default)",
+    Option "q" ["quiet"]          (NoArg (\c -> return $ c { verbosity = Silent   })) "Print only fatal errors",
 
-    Option "" ["report-mrnm"]  (NoArg (\c -> return $ c { report_mrnm  = True })) "Report wrong mate reference name (default yes)",
-    Option "" ["report-mpos"]  (NoArg (\c -> return $ c { report_mpos  = True })) "Report wrong mate position (default yes)",
-    Option "" ["report-isize"] (NoArg (\c -> return $ c { report_isize = True })) "Report wrong insert size (default no)",
-    Option "" ["report-flags"] (NoArg (\c -> return $ c { report_flags = True })) "Report wrong flags (default yes)",
-    Option "" ["report-fflag"] (NoArg (\c -> return $ c { report_fflag = True })) "Report commonly inconsistent flags (default no)",
-    Option "" ["report-ixs"]    (NoArg (\c -> return $ c { report_ixs = False })) "Report mismatched index fields (default yes)",
+    Option "" ["report-mrnm"]     (NoArg (\c -> return $ c { report_mrnm  =  True })) "Report wrong mate reference name (default yes)",
+    Option "" ["report-mpos"]     (NoArg (\c -> return $ c { report_mpos  =  True })) "Report wrong mate position (default yes)",
+    Option "" ["report-isize"]    (NoArg (\c -> return $ c { report_isize =  True })) "Report wrong insert size (default no)",
+    Option "" ["report-flags"]    (NoArg (\c -> return $ c { report_flags =  True })) "Report wrong flags (default yes)",
+    Option "" ["report-fflag"]    (NoArg (\c -> return $ c { report_fflag =  True })) "Report commonly inconsistent flags (default no)",
+    Option "" ["report-ixs"]      (NoArg (\c -> return $ c { report_ixs   = False })) "Report mismatched index fields (default yes)",
 
     Option "" ["no-report-mrnm"]  (NoArg (\c -> return $ c { report_mrnm  = False })) "Do not report wrong mate reference name",
     Option "" ["no-report-mpos"]  (NoArg (\c -> return $ c { report_mpos  = False })) "Do not report wrong mate position",
     Option "" ["no-report-isize"] (NoArg (\c -> return $ c { report_isize = False })) "Do not report wrong insert size",
     Option "" ["no-report-flags"] (NoArg (\c -> return $ c { report_flags = False })) "Do not report wrong flags",
     Option "" ["no-report-fflag"] (NoArg (\c -> return $ c { report_fflag = False })) "Do not report commonly inconsistent flags",
-    Option "" ["no-report-ixs"]     (NoArg (\c -> return $ c { report_ixs = False })) "Do not report mismatched index fields",
+    Option "" ["no-report-ixs"]   (NoArg (\c -> return $ c { report_ixs   = False })) "Do not report mismatched index fields",
 
-    Option "" ["only-mapped"] (NoArg (\c -> return $ c { infilter = mapped_only })) "Ignore totally unmapped input",
-    Option "" ["fix-sven"] (ReqArg set_fixsven "QUAL") "Trim 3' ends of avg qual lower than QUAL",
+    Option "" ["only-mapped"]   (NoArg (\c -> return $ c { infilter = mapped_only })) "Ignore totally unmapped input",
+    Option "" ["fix-sven"]                                (ReqArg set_fixsven "QUAL") "Trim 3' ends of avg qual lower than QUAL",
+
+    Option "M" ["max-memory"]                           (ReqArg set_max_mem     "MB") "Use at most MB megabytes per queue",
+    Option "L" ["max-merge"]                            (ReqArg set_max_merge  "NUM") "Merge at most NUM files at a time",
+    Option "T" ["temp-path"]                            (ReqArg set_temp_path "PATH") "Store temporary files in PATH",
 
     Option "h?" ["help","usage"] (NoArg usage) "Print this helpful message and exit",
     Option "V"  ["version"]      (NoArg  vrsn) "Print version number and exit" ]
@@ -117,6 +119,11 @@ options = [
     set_output  f  c = return $ c { output = fmap (const ExitSuccess) . writeBamFile f }
     set_validate   c = return $ c { output = \_ -> ExitSuccess <$ skipToEof }
     set_fixsven  a c = readIO a >>= \q -> return $ c { fixsven = Just q }
+
+    set_max_mem   a c = readIO a >>= \x -> return $ c { pqconf = (pqconf c) { max_mb    = x } }
+    set_max_merge a c = readIO a >>= \x -> return $ c { pqconf = (pqconf c) { max_merge = x } }
+    set_temp_path a c =                    return $ c { pqconf = (pqconf c) { temp_path = a } }
+
 
 mapped_only :: BamPair -> Bool
 mapped_only p = case p of
@@ -567,53 +574,6 @@ re_pair cf rs = eneeCheckIfDone $ \out -> runMating go finish ms0 out (QS makePQ
         closePQ x ; closePQ y ; closePQ z
         hPutStrLn stderr $ report_stats st
         return (liftI o)
-
-data ByQName = ByQName { _bq_hash :: !Int
-                       , _bq_alnid :: !Int
-                       , _bq_rec :: !BamRaw }
-
--- Note on XI:  this is *not* the index read (MPI EVAN convention), but
--- the number of the alignment (Segemehl convention, I believe).
--- Fortunately, the index is never numeric, so this is reasonably safe.
-byQName :: BamRaw -> ByQName
-byQName b = ByQName (hash $ br_qname b) (extAsInt 0 "XI" $ unpackBam b) b
-
-instance Eq ByQName where
-    ByQName ah ai a == ByQName bh bi b =
-        (ah, ai, br_qname a) == (bh, bi, br_qname b)
-
-instance Ord ByQName where
-    ByQName ah ai a `compare` ByQName bh bi b =
-        (ah, ai, b_qname (unpackBam a)) `compare` (bh, bi, b_qname (unpackBam b))
-
-newtype ByMatePos = ByMatePos BamRaw
-
-instance Eq ByMatePos where
-    ByMatePos a == ByMatePos b =
-        br_mate_pos a == br_mate_pos b
-
-instance Ord ByMatePos where
-    ByMatePos a `compare` ByMatePos b =
-        br_mate_pos a `compare` br_mate_pos b
-
-instance Binary ByQName where put (ByQName _ _ r) = put (raw_data r) ; get = byQName   . bamRaw 0 <$> get
-instance Binary ByMatePos where put (ByMatePos r) = put (raw_data r) ; get = ByMatePos . bamRaw 0 <$> get
-
-instance Sized ByQName where usedBytes (ByQName _ _ r) = S.length (raw_data r) + 80
-instance Sized ByMatePos where usedBytes (ByMatePos r) = S.length (raw_data r) + 64
-
-br_mate_pos :: BamRaw -> (Refseq, Int)
-br_mate_pos = (b_mrnm &&& b_mpos) . unpackBam
-
-br_self_pos :: BamRaw -> (Refseq, Int)
-br_self_pos = (b_rname &&& b_pos) . unpackBam
-
-br_qname :: BamRaw -> Seqid
-br_qname = b_qname . unpackBam
-
-br_copy :: BamRaw -> BamRaw
-br_copy br = bamRaw (virt_offset br) $! S.copy (raw_data br)
-
 
 
 -- | To catch pairs whose mates are adjacent (either because the file
