@@ -1,4 +1,4 @@
-{-# LANGUAGE CPP #-}
+{-# LANGUAGE CPP, Rank2Types #-}
 {-
 This is a validator/fixup for paired end BAM files, that is more
 efficient than 'samtools sort -n' followed by 'samtools fixmate'.
@@ -22,21 +22,20 @@ In the end, the code will work...
    the rule, because then it degenerates to a full sort by qname.
 
 TODO:
- . upgrade to pqueue in external memory
  . a companion program that sorts would be cool, but it should be an
    opportunistic sort that is fast on almost sorted files.
+ . the parameters for the 'PQ's need to be configurable.
 -}
 
 import Bio.Bam                           hiding ( mergeInputs, combineCoordinates )
 import Bio.Prelude                       hiding ( yield )
-import Bio.PriorityQueue
 import Bio.Util.Numeric                         ( showNum )
 import Control.Concurrent.Async
 import Control.Concurrent.STM.TQueue
 import Control.Concurrent.STM.TVar
-import Control.Monad.Trans.Class
 import Data.Binary
 import Paths_biohazard_tools                    ( version )
+import PriorityQueue
 import System.Console.GetOpt
 import System.Process
 #if MIN_VERSION_process(1,2,1)
@@ -50,21 +49,23 @@ import qualified Data.Vector.Generic as V
 data Verbosity = Silent | Errors | Warnings | Notices deriving (Eq, Ord)
 data KillMode  = KillNone | KillUu | KillAll deriving (Eq, Ord)
 
-data Config = CF { report_mrnm :: !Bool
-                 , report_mpos :: !Bool
+data Config = CF { report_mrnm  :: !Bool
+                 , report_mpos  :: !Bool
                  , report_isize :: !Bool
                  , report_flags :: !Bool
                  , report_fflag :: !Bool
-                 , report_ixs :: !Bool
-                 , verbosity :: Verbosity
-                 , killmode :: KillMode
-                 , infilter :: BamPair -> Bool
-                 , output :: BamMeta -> Iteratee [BamRec] IO ExitCode
-                 , fixsven :: Maybe Int }
+                 , report_ixs   :: !Bool
+                 , verbosity    :: Verbosity
+                 , killmode     :: KillMode
+                 , infilter     :: BamPair -> Bool
+                 , output       :: BamMeta -> Iteratee [BamRec] IO ExitCode
+                 , pqconf       :: PQ_Conf
+                 , fixsven      :: Maybe Int }
 
 config0 :: IO Config
 config0 = return $ CF True True False True False True Errors KillNone
-                      (const True) (fmap (const ExitSuccess) . protectTerm . pipeBamOutput) Nothing
+                      (const True) (fmap (const ExitSuccess) . protectTerm . pipeBamOutput)
+                      (PQ_Conf 1000 200 "/var/tmp/" undefined) Nothing
 
 options :: [OptDescr (Config -> IO Config)]
 options = [
@@ -102,8 +103,9 @@ options = [
   where
     usage _ = do pn <- getProgName
                  let blah = "Usage: " ++ pn ++ " [OPTION...] [FILE...]\n" ++
-                            "Merge BAM files, rearrange them to move mate pairs together, " ++
-                            "output a file with consistent mate pair information."
+                            "Merge BAM files, rearrange them to move mate pairs together, \n" ++
+                            "output a file with consistent mate pair information.  Alternatively, \n" ++
+                            "pipe multiple FastQ streams in lock step to a program."
                  hPutStrLn stderr $ usageInfo blah options
                  exitSuccess
 
@@ -174,10 +176,6 @@ pipe_to cmd args (opts, errs, fs) = (mkout : opts, errs, fs)
                 Nothing -> return ()
 
 
--- XXX placeholder...
-pqconf :: PQ_Conf
-pqconf = PQ_Conf 1000 "/var/tmp/"
-
 main :: IO ExitCode
 main = do (args,cmd) <- break (`elem` ["-X","--exec"]) `fmap` getArgs
           let (opts, files, errors) = (case cmd of _:cmd':args' -> pipe_to cmd' args' ; _ -> id)
@@ -186,11 +184,10 @@ main = do (args,cmd) <- break (`elem` ["-X","--exec"]) `fmap` getArgs
           unless (null errors) $ mapM_ (hPutStrLn stderr) errors >> exitFailure
           config <- foldl (>>=) config0 opts
           add_pg <- addPG $ Just version
-          withQueues                                           $ \queues ->
-            mergeInputs files >=> run                          $ \hdr ->
-            filterStream (infilter config)                    =$
-            re_pair queues config (meta_refs hdr)             =$
-            mapChunks (maybe id do_trim (fixsven config))     =$
+          mergeInputs files >=> run                          $ \hdr ->
+            filterStream (infilter config)                  =$
+            re_pair config (meta_refs hdr)                  =$
+            mapChunks (maybe id do_trim (fixsven config))   =$
             (output config) (add_pg hdr)
 
 
@@ -201,7 +198,7 @@ fixmate :: MonadIO m => BamRaw -> BamRaw -> Mating r m [BamRec]
 fixmate r s | isFirstMate (unpackBam r) && isSecondMate (unpackBam s) = sequence [go r s, go s r]
             | isSecondMate (unpackBam r) && isFirstMate (unpackBam s) = sequence [go s r, go r s]
             | otherwise = liftIO $ do hPutStrLn stderr $ "Names match, but 1st mate / 2nd mate flags do not: "
-                                                        ++ unpack (b_qname (unpackBam r))
+                                                       ++ unpack (b_qname (unpackBam r))
                                       hPutStrLn stderr $ "There is no clear way to fix this file.  Giving up."
                                       exitFailure
   where
@@ -335,29 +332,35 @@ data Queues = QS { right_here :: !(PQ ByQName)
                  , in_order   :: !(PQ ByMatePos)
                  , messed_up  :: !(PQ ByQName) }
 
-withQueues :: (Queues -> IO r) -> IO r
-withQueues k = withPQ pqconf $ \h ->
-               withPQ pqconf $ \o   ->
-               withPQ pqconf $ \m  ->
-               k $ QS h o m
+type Lens s a = forall f. Functor f => (a -> f a) -> s -> f s
+
+right_here' :: Lens Queues (PQ ByQName)
+right_here' f q = (\p -> q { right_here = p }) <$> f (right_here q)
+
+in_order' :: Lens Queues (PQ ByMatePos)
+in_order'   f q = (\p -> q { in_order   = p }) <$> f (in_order   q)
+
+messed_up' :: Lens Queues (PQ ByQName)
+messed_up'  f q = (\p -> q { messed_up  = p }) <$> f (messed_up  q)
 
 ms0 :: MatingStats
 ms0 = MS 0 0 0 0 0 0 0 0 0 0
 
-getSize :: (MonadIO m, Ord a, Binary a, Sizeable a) => (Queues -> PQ a) -> Mating r m Int
-getSize sel = getq sel >>= liftIO . sizePQ
+getSize :: (Ord a, Sized a) => (Queues -> PQ a) -> Mating r m Int
+getSize sel = getq $ sizePQ . sel
 
-enqueue :: (MonadIO m, Ord a, Binary a, Sizeable a) => a -> (Queues -> PQ a) -> Mating r m ()
-enqueue a sel = getq sel >>= liftIO . enqueuePQ a
+enqueue :: (MonadIO m, Ord a, Sized a) => a -> Lens Queues (PQ a) -> Mating r m ()
+enqueue a sel = Mating $ \k s o q c r -> liftIO (sel (enqueuePQ (pqconf c) a) q) >>= \q' -> k () s o q' c r
 
-peekMin :: (MonadIO m, Ord a, Binary a, Sizeable a) => (Queues -> PQ a) -> Mating r m (Maybe a)
-peekMin sel = getq sel >>= liftIO . peekMinPQ
+peekMin :: (Ord a, Sized a) => (Queues -> PQ a) -> Mating r m (Maybe a)
+peekMin sel = getq $ fmap fst . viewMinPQ . sel
 
-fetchMin :: (MonadIO m, Ord a, Binary a, Sizeable a) => (Queues -> PQ a) -> Mating r m (Maybe a)
-fetchMin sel = getq sel >>= liftIO . getMinPQ
+fetchMin :: (Ord a, Sized a) => Lens Queues (PQ a) -> Mating r m (Maybe a)
+fetchMin sel = modq . sel $ \q -> case viewMinPQ q of Nothing     -> (Nothing, q)
+                                                      Just (a,q') -> (Just  a, q')
 
-discardMin :: (MonadIO m, Ord a, Binary a, Sizeable a) => (Queues -> PQ a) -> Mating r m ()
-discardMin sel = getq sel >>= liftIO . getMinPQ >>= \_ -> return ()
+discardMin :: (Ord a, Sized a) => Lens Queues (PQ a) -> Mating r m ()
+discardMin sel = () <$ fetchMin sel
 
 
 note, warn, err :: MonadIO m => String -> Mating r m ()
@@ -374,7 +377,7 @@ report' = do o <- gets total_out
 report :: MonadIO m => BamRaw -> Mating r m ()
 report br = do i <- gets total_in
                o <- gets total_out
-               when (i `mod` 0x20000 == 0) $ do
+               when (i `mod` 0x100000 == 0) $ do
                      hs <- getSize right_here
                      os <- getSize in_order
                      ms <- getSize messed_up
@@ -382,8 +385,10 @@ report br = do i <- gets total_in
                      let BamRec{..} = unpackBam br
                          rn = unpack . sq_name $ getRef rr b_rname
                          at = if b_rname == invalidRefseq || b_pos == invalidPos
-                              then "" else printf "@%s/%d, " rn b_pos
-                     note $ printf "%sin: %d, out: %d, here: %d, wait: %d, mess: %d" (at::String) i o hs os ms
+                              then "" else printf "@%s/%d,\t" rn b_pos
+                         off = fromIntegral $ b_virtual_offset `shiftR` 36
+                     note $ printf "%+5dMB, %sin: %9d, out: %9d, here: %6d, wait: %6d, mess: %6d"
+                                   (off::Int) (at::String) i o hs os ms
 
 no_mate_here :: MonadIO m => String -> BamRaw -> Mating r m ()
 no_mate_here l br = do note $ let b = unpackBam br
@@ -391,7 +396,7 @@ no_mate_here l br = do note $ let b = unpackBam br
                                  ++ shows (b_qname b) (if isFirstMate b then "/1" else "/2")
                                  ++ " did not have a mate at the right location."
                        let !br' = br_copy br
-                       enqueue (byQName br') messed_up
+                       enqueue (byQName br') messed_up'
 
 no_mate_ever :: MonadIO m => BamRaw -> Mating r m ()
 no_mate_ever b = do let b' = unpackBam b
@@ -427,8 +432,6 @@ instance Monad (Mating r m) where
 instance MonadIO m => MonadIO (Mating r m) where
     liftIO f = Mating $ \k s o q c r -> liftIO f >>= \a -> k a s o q c r
 
-instance MonadTrans (Mating r) where
-    lift m = Mating $ \k s o q c r -> lift m >>= \a -> k a s o q c r
 
 lift'it :: Monad m => Iteratee [BamPair] m a -> Mating r m a
 lift'it m = Mating $ \k s o q c r -> m >>= \a -> k a s o q c r
@@ -441,6 +444,9 @@ gets f = Mating $ \k s -> k (f s) s
 
 getq :: (Queues -> a) -> Mating r m a
 getq f = Mating $ \k s o q -> k (f q) s o q
+
+modq :: (Queues -> (b, Queues)) -> Mating r m b
+modq f = Mating $ \k s o q -> case f q of (b, q') -> k b s o q'
 
 modify :: (MatingStats -> MatingStats) -> Mating r m ()
 modify f = Mating $ \k s -> (k () $! f s)
@@ -463,9 +469,11 @@ yield rs = Mating $ \k s o q c r -> let !s' = s { total_out = length rs + total_
 -- To ensure proper cleanup, we require the priority queues to be created
 -- outside.  Since one is continually reused, it is important that a PQ
 -- that is emptied no longer holds on to files on disk.
-re_pair :: MonadIO m => Queues -> Config -> Refs -> Enumeratee [BamPair] [BamRec] m a
-re_pair qs cf rs = eneeCheckIfDone $ \out -> runMating go finish ms0 out qs cf rs
+re_pair :: MonadIO m => Config -> Refs -> Enumeratee [BamPair] [BamRec] m a
+re_pair cf rs = eneeCheckIfDone $ \out -> runMating go finish ms0 out (QS makePQ makePQ makePQ) cf' rs
    where
+    cf' = cf { pqconf = (pqconf cf) { croak = unless (verbosity cf < Notices) . hPutStrLn stderr . (++) "[fixpair] info:    " } }
+
     go = fetchNext >>= go'
 
     -- At EOF, flush everything.
@@ -487,7 +495,7 @@ re_pair qs cf rs = eneeCheckIfDone $ \out -> runMating go finish ms0 out qs cf r
                 -- nope, r is out of order and goes to 'messed_up'
                 LT -> do warn $ "record " ++ show (br_qname r) ++ " is out of order."
                          let !r' = br_copy r
-                         enqueue (byQName r') messed_up
+                         enqueue (byQName r') messed_up'
                          go
 
                 -- nope, r comes later.  we need to finish our business here
@@ -499,23 +507,23 @@ re_pair qs cf rs = eneeCheckIfDone $ \out -> runMating go finish ms0 out qs cf r
 
 
     -- lonely guy, belongs either here or needs to wait for the mate
-    enqueueThis r | br_self_pos r >= br_mate_pos r = enqueue (byQName r) right_here
-                  | otherwise             = r' `seq` enqueue (ByMatePos r') in_order
+    enqueueThis r | br_self_pos r >= br_mate_pos r = enqueue (byQName r) right_here'
+                  | otherwise             = r' `seq` enqueue (ByMatePos r') in_order'
         where r' = br_copy r
 
     -- Flush the in_order queue to messed_up, since those didn't find
     -- their mate the ordinary way.  Afterwards, flush the messed_up
     -- queue.
-    flush_in_order = fetchMin in_order >>= \zz -> case zz of
+    flush_in_order = fetchMin in_order' >>= \zz -> case zz of
         Just (ByMatePos b) -> no_mate_here "flush_in_order" b >> flush_in_order
         Nothing            -> flush_messed_up
 
     -- Flush the messed up queue.  Everything should come off in pairs,
     -- unless something is broken.
-    flush_messed_up = fetchMin messed_up >>= flush_mess1
+    flush_messed_up = fetchMin messed_up' >>= flush_mess1
 
     flush_mess1 Nothing                 = return ()
-    flush_mess1 (Just (ByQName _ ai a)) = fetchMin messed_up >>= flush_mess2 ai a
+    flush_mess1 (Just (ByQName _ ai a)) = fetchMin messed_up' >>= flush_mess2 ai a
 
     flush_mess2  _ a Nothing = no_mate_ever a
 
@@ -526,10 +534,10 @@ re_pair qs cf rs = eneeCheckIfDone $ \out -> runMating go finish ms0 out qs cf r
 
     -- Flush the right_here queue.  Everything should come off in pairs,
     -- if not, it goes to messed_up.  When done, loop back to 'go'
-    flush_here  r = fetchMin right_here >>= flush_here1 r
+    flush_here  r = fetchMin right_here' >>= flush_here1 r
 
     flush_here1 r Nothing = go' r
-    flush_here1 r (Just a) = fetchMin right_here >>= flush_here2 r a
+    flush_here1 r (Just a) = fetchMin right_here' >>= flush_here2 r a
 
     flush_here2 r (ByQName _ _ a) Nothing = do no_mate_here "flush_here2/Nothing" a
                                                flush_here r
@@ -545,23 +553,28 @@ re_pair qs cf rs = eneeCheckIfDone $ \out -> runMating go finish ms0 out qs cf r
             case zz of
                 Nothing -> return ()
                 Just (ByMatePos b)
-                       | pivot  > br_mate_pos b -> do discardMin in_order
+                       | pivot  > br_mate_pos b -> do discardMin in_order'
                                                       no_mate_here "complete_here" b
                                                       complete_here pivot
 
-                       | pivot == br_mate_pos b -> do discardMin in_order
-                                                      enqueue (byQName b) right_here
+                       | pivot == br_mate_pos b -> do discardMin in_order'
+                                                      enqueue (byQName b) right_here'
                                                       complete_here pivot
 
                        | otherwise -> return ()
 
-    finish () st o _qs _cf _rs = do liftIO $ hPutStrLn stderr $ report_stats st
-                                    return (liftI o)
+    finish () st o (QS x y z) _cf _rs = liftIO $ do
+        closePQ x ; closePQ y ; closePQ z
+        hPutStrLn stderr $ report_stats st
+        return (liftI o)
 
 data ByQName = ByQName { _bq_hash :: !Int
                        , _bq_alnid :: !Int
                        , _bq_rec :: !BamRaw }
 
+-- Note on XI:  this is *not* the index read (MPI EVAN convention), but
+-- the number of the alignment (Segemehl convention, I believe).
+-- Fortunately, the index is never numeric, so this is reasonably safe.
 byQName :: BamRaw -> ByQName
 byQName b = ByQName (hash $ br_qname b) (extAsInt 0 "XI" $ unpackBam b) b
 
@@ -583,11 +596,11 @@ instance Ord ByMatePos where
     ByMatePos a `compare` ByMatePos b =
         br_mate_pos a `compare` br_mate_pos b
 
-instance Binary ByQName where put = undefined ; get = undefined    -- XXX
-instance Binary ByMatePos where put = undefined ; get = undefined -- XXX
+instance Binary ByQName where put (ByQName _ _ r) = put (raw_data r) ; get = byQName   . bamRaw 0 <$> get
+instance Binary ByMatePos where put (ByMatePos r) = put (raw_data r) ; get = ByMatePos . bamRaw 0 <$> get
 
-instance Sizeable ByQName where usedBytes = undefined       -- XXX
-instance Sizeable ByMatePos where usedBytes = undefined    -- XXX
+instance Sized ByQName where usedBytes (ByQName _ _ r) = S.length (raw_data r) + 80
+instance Sized ByMatePos where usedBytes (ByMatePos r) = S.length (raw_data r) + 64
 
 br_mate_pos :: BamRaw -> (Refseq, Int)
 br_mate_pos = (b_mrnm &&& b_mpos) . unpackBam

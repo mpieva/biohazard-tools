@@ -29,22 +29,40 @@ source-repository head
   location: https://bitbucket.org/ustenzel/biohazard-tools.git
 
 
+Executable test
+  Main-is:             test.hs
+  Ghc-options:         -Wall -rtsopts
+  Default-Language:    Haskell2010
+  Default-Extensions:  NoImplicitPrelude, OverloadedStrings,
+                       BangPatterns, RecordWildCards, FlexibleContexts
+  Other-Extensions:    CPP, Rank2Types
+  Hs-Source-Dirs:      src
+  Other-modules:       Paths_biohazard_tools, PriorityQueue
+  Build-depends:       base                     >= 4.6 && < 4.10,
+                       binary                   >= 0.7 && < 0.9,
+                       biohazard                >= 0.6.15 && < 0.7,
+                       bytestring               >= 0.10.2 && < 0.11,
+                       random,
+                       snappy                   == 0.2.*,
+                       unix                     >= 2.5 && < 2.8
+
 Executable bam-fixpair
   Main-is:             bam-fixpair.hs
   Ghc-options:         -Wall -rtsopts
   Default-Language:    Haskell2010
   Default-Extensions:  NoImplicitPrelude, OverloadedStrings,
                        BangPatterns, RecordWildCards, FlexibleContexts
+  Other-Extensions:    CPP, Rank2Types
   Hs-Source-Dirs:      src
-  Other-modules:       Paths_biohazard_tools
+  Other-modules:       Paths_biohazard_tools, PriorityQueue
   Build-depends:       async                    >= 2.0 && < 2.2,
                        base                     >= 4.6 && < 4.10,
                        binary                   >= 0.7 && < 0.9,
                        biohazard                >= 0.6.15 && < 0.7,
                        bytestring               >= 0.10.2 && < 0.11,
                        process                  >= 1.0 && < 1.5,
+                       snappy                   == 0.2.*,
                        stm                      == 2.4.*,
-                       transformers             >= 0.4.1 && < 0.6,
                        unix                     >= 2.5 && < 2.8,
                        vector                   >= 0.10 && < 0.13
 
