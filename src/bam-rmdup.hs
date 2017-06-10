@@ -1,10 +1,25 @@
+-- TODO
+--
+-- - The sorting strategy right now uses a PriorityQueue to perform a
+--   full sort.  We end up sorting every circular target sequence
+--   *twice*, once to normalize and once to wrap.  It's robust, but not
+--   ideal.
+--
+--   The normalization could get away with less than a full sort, if it
+--   was ensured that coordinates only increase.  The normalizeTo
+--   function, however, *decreases* them.  After changing it, we could
+--   stream records while sorting.  We still perform essentially a full
+--   sort, but we don't need to buffer everything.
+--
+-- - PQ_Conf needs command line options.
+
 import Bio.Bam
 import Bio.Bam.Rmdup
-import Bio.Iteratee.Builder
 import Bio.Prelude
 import Bio.Util.Numeric                         ( showNum, showOOM, estimateComplexity )
 import Data.ByteString.Builder
 import Paths_biohazard_tools                    ( version )
+import PriorityQueue
 import System.Console.GetOpt
 import System.IO                                ( withFile, IOMode(..) )
 
@@ -178,6 +193,9 @@ data Counts = Counts { tin          :: !Int
                      , good_singles :: !Int
                      , good_total   :: !Int }
 
+pqconf = PQ_Conf 1000 200 "/var/tmp/" $ hPutStrLn stderr
+
+
 main :: IO ()
 main = do
     args <- getArgs
@@ -208,7 +226,7 @@ main = do
        (ct,hist,ou) <- progressBam "Rmdup at" refs' 0x8000 debug                                          =$
                        takeWhileE is_halfway_aligned                                                      =$
                        concatMapStreamM cleanup                                                           =$
-                       normalizeSortWith circtable                                                        =$
+                       mapSortAtGroups pqconf circtable (\(nm,l) r -> [ normalizeTo nm l r ])             =$
                        filterStream (\b -> b_mapq b >= min_qual)                                          =$
                        case output of
                             Nothing -> rmdup (get_label tbl) strand_preserved (cheap_collapse' keep_all)  =$
@@ -220,7 +238,7 @@ main = do
                                        zipStreams3 (mapStream snd =$ count_all (get_label tbl))
                                                    (mapStream fst =$ collect_histogram)
                                                    (mapStream snd =$
-                                                    (wrapSortWith circtable $
+                                                    (mapSortAtGroups pqconf circtable (wrapTo . snd) $
                                                      o (get_label tbl) (add_pg hdr { meta_refs = refs' })))
 
        let do_copy = progressBam "Copying junk at" refs' 0x8000 debug ><>
@@ -374,23 +392,11 @@ clean_multi_flags b = return $ if extAsInt 1 "HI" b /= 1 then Nothing else Just 
   where
     b' = b { b_exts = deleteE "HI" $ deleteE "IH" $ deleteE "NH" $ b_exts b }
 
+-- | Groups sorted records and selectively maps a function over some of
+-- these groups, while preserving sorting.
 
-normalizeSortWith :: MonadIO m => IntMap (Seqid, Int) -> Enumeratee [BamRec] [BamRec] m a
-normalizeSortWith m = mapSortAtGroups m $ \(nm,l) r -> [ normalizeTo nm l r ]
-
-wrapSortWith :: MonadIO m => IntMap (Seqid, Int) -> Enumeratee [BamRec] [BamRec] m a
-wrapSortWith m = mapSortAtGroups m $ \(_,l) -> wrapTo l
-
--- Given a map from reference sequences to arguments, extract those
--- groups as list, apply a function to the argument and the list, pass
--- the result on.  Absent groups are passed on as they are.  Note that
--- ordering within groups is messed up (it doesn't matter here).
---
--- We accumulate the 'Left' and 'Right' 'BamRec's directly into two BBs.
--- This should result in two sorted BAM streams.  When done, we stream
--- the buffers back (somehow...) and merge them.
-mapSortAtGroups :: MonadIO m => IntMap a -> (a -> BamRec -> [Either BamRec BamRec]) -> Enumeratee [BamRec] [BamRec] m b
-mapSortAtGroups m f = eneeCheckIfDonePass no_group
+mapSortAtGroups :: MonadIO m => PQ_Conf -> IntMap a -> (a -> BamRec -> [Either BamRec BamRec]) -> Enumeratee [BamRec] [BamRec] m b
+mapSortAtGroups cf m f = eneeCheckIfDonePass no_group
   where
     no_group k (Just e) = idone (liftI k) $ EOF (Just e)
     no_group k Nothing  = tryHead >>= maybe (idone (liftI k) $ EOF Nothing) (\a -> no_group_1 a k Nothing)
@@ -399,45 +405,25 @@ mapSortAtGroups m f = eneeCheckIfDonePass no_group
     no_group_1 a k Nothing  =
         case I.lookup (b_rname_int a) m of
             Nothing  -> eneeCheckIfDonePass no_group . k $ Chunk [a]
-            Just arg -> do bbs <- pushTo (f arg a) (collect, collect)
-                           cont_group (b_rname a) arg bbs k Nothing
+            Just arg -> do pq <- liftIO . pushTo makePQ $ f arg a
+                           cont_group (b_rname a) arg pq k Nothing
 
     cont_group _rn _arg _bbs k (Just  e) = idone (liftI k) $ EOF (Just e)
-    cont_group  rn  arg  bbs k  Nothing  = tryHead >>= maybe flush_eof check1
+    cont_group  rn  arg  pq k  Nothing  = tryHead >>= maybe flush_eof check1
       where
-        flush_eof  = streamOut bbs (liftI k)
-        flush_go a = streamOut bbs (liftI k) >>= eneeCheckIfDonePass (no_group_1 a)
-        check1 a | b_rname a == rn = do bbs' <- pushTo (f arg a) bbs
-                                        cont_group rn arg bbs' k Nothing
+        flush_eof  = lift (enumPQ pq (liftI k))
+        flush_go a = lift (enumPQ pq (liftI k)) >>= eneeCheckIfDonePass (no_group_1 a)
+        check1 a | b_rname a == rn = do pq' <- liftIO . pushTo pq $ f arg a
+                                        cont_group rn arg pq' k Nothing
                  | otherwise       = flush_go a
 
     b_rname_int = fromIntegral . unRefseq . b_rname
 
+    pushTo :: PQ BySelfPos -> [Either BamRec BamRec] -> IO (PQ BySelfPos)
+    pushTo = foldM (\q a -> either packBam packBam a >>= \b -> enqueuePQ cf (BySelfPos b) q)
 
-collect :: MonadIO m => Iteratee [BamRec] m [Bytes]
-collect = mapChunks (foldMap (Endo . pushBam)) ><> encodeBgzf 1 =$ liftI (chunksToList [])
-  where
-    chunksToList acc (Chunk x) = y `seq` liftI (chunksToList (y:acc)) where y = S.copy x
-    chunksToList acc (EOF  mx) = idone (reverse acc) (EOF mx)
-
-
-pushTo :: Monad m => [Either BamRec BamRec] -> (Iteratee [BamRec] m a, Iteratee [BamRec] m a)
-                  ->                         m (Iteratee [BamRec] m a, Iteratee [BamRec] m a)
-pushTo es (bb1,bb2) = liftM2 (,) (enumPure1Chunk ls bb1) (enumPure1Chunk rs bb2)
-  where (ls,rs) = partitionEithers es
-
-
-streamOut :: (MonadIO m, Nullable x)
-          => (Iteratee s (Iteratee x m) [Bytes], Iteratee s1 (Iteratee x m) [Bytes])
-          -> Enumeratee x [BamRec] m a
-streamOut (bb1,bb2) it = do
-    bs1 <- run bb1
-    bs2 <- run bb2
-    lift $ mergeEnums (streamBB bs1) (streamBB bs2) (mergeSortStreams (?)) it
-  where
-    (?) :: BamRec -> BamRec -> Ordering' BamRec
-    u ? v = if (b_rname &&& b_pos) u < (b_rname &&& b_pos) v then Less else NotLess
-
-    streamBB :: MonadIO m => [Bytes] -> Enumerator [BamRec] m b1
-    streamBB bb = enumList bb $= decompressBgzfBlocks $= convStream (map unpackBam `liftM` getBamRaw)
+    enumPQ :: Monad m => PQ BySelfPos -> Enumerator [BamRec] m b
+    enumPQ pq it = case viewMinPQ pq of
+        Nothing -> return it
+        Just (BySelfPos r, pq') -> enumPure1Chunk [unpackBam r] it >>= enumPQ pq'
 

@@ -129,9 +129,11 @@ Executable bam-rmdup
   Hs-Source-Dirs:      src
   Other-modules:       Paths_biohazard_tools
   Build-depends:       base                     >= 4.6 && < 4.10,
+                       binary                   >= 0.7 && < 0.9,
                        biohazard                >= 0.6.15 && < 0.7,
                        bytestring               >= 0.10.2 && < 0.11,
                        containers               >= 0.4.1 && < 0.6,
+                       snappy                   == 0.2.*,
                        unordered-containers     >= 0.2.3 && < 0.3,
                        vector                   >= 0.10 && < 0.13
 

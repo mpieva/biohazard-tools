@@ -23,7 +23,7 @@
 -- coordinates, we remove XA and set MAPQ to 37.
 
 import Bio.Bam
-import Bio.Bam.Rmdup
+import Bio.Bam.Rmdup                    ( normalizeTo, wrapTo )
 import Bio.Prelude
 import Paths_biohazard_tools            ( version )
 
@@ -68,10 +68,9 @@ parseArgs refs | Z.null refs = error $ "no target sequences found (empty input?)
 
 
 -- | This runs both stages of the rewrapping: First normalize alignments
--- (POS must be in the canonical interval) and fix XA, MPOS, MAPQ where
+-- (so that POS is in the canonical interval) and fix XA, MPOS, MAPQ where
 -- appropriate, then duplicate the read and softmask the noncanonical
--- parts.  Rmdup fits in between the two, hence the split.  We ignore
--- sorting in here.
+-- parts.  We ignore sorting in here.
 rewrap :: M.Map Refseq (Int,Bytes) -> BamRec -> [BamRec]
 rewrap m b = maybe [b] (\(l,nm) -> map (either id id) . wrapTo l .
                                    either id id . normalizeTo nm l $ b)
