@@ -1,17 +1,4 @@
--- TODO
---
--- - The sorting strategy right now uses a PriorityQueue to perform a
---   full sort.  We end up sorting every circular target sequence
---   *twice*, once to normalize and once to wrap.  It's robust, but not
---   ideal.
---
---   The normalization could get away with less than a full sort, if it
---   was ensured that coordinates only increase.  The normalizeTo
---   function, however, *decreases* them.  After changing it, we could
---   stream records while sorting.  We still perform essentially a full
---   sort, but we don't need to buffer everything.
---
--- - PQ_Conf needs command line options.
+-- TODO: PQ_Conf needs command line options.
 
 import Bio.Bam
 import Bio.Bam.Rmdup
@@ -206,8 +193,10 @@ main = do
 
     add_pg <- addPG $ Just version
     mergeInputRanges which files >=> run $ \hdr -> do
-       (circtable, refs') <- liftIO $ circulars (meta_refs hdr)
+       (circtable_, refs') <- liftIO $ circulars (meta_refs hdr)
        let tbl = mk_rg_tbl hdr
+           circtable = I.map (\(nm,l) -> (nm, l, maybe l sq_length $ find ((==) nm . sq_name) (meta_refs hdr))) circtable_
+
        unless (M.null tbl) $ liftIO $ do
                 debug "mapping of read groups to libraries:\n"
                 mapM_ debug [ unpack k ++ " --> " ++ unpack v ++ "\n" | (k,v) <- M.toList tbl ]
@@ -226,7 +215,8 @@ main = do
        (ct,hist,ou) <- progressBam "Rmdup at" refs' 0x8000 debug                                          =$
                        takeWhileE is_halfway_aligned                                                      =$
                        concatMapStreamM cleanup                                                           =$
-                       mapSortAtGroups pqconf circtable (\(nm,l) r -> [ normalizeTo nm l r ])             =$
+                       ( let norm (nm,lnat,lpad) r = [ normalizeFwd nm lnat lpad r ]
+                         in mapSortAtGroups pqconf Preserved circtable norm )                             =$
                        filterStream (\b -> b_mapq b >= min_qual)                                          =$
                        case output of
                             Nothing -> rmdup (get_label tbl) strand_preserved (cheap_collapse' keep_all)  =$
@@ -238,7 +228,8 @@ main = do
                                        zipStreams3 (mapStream snd =$ count_all (get_label tbl))
                                                    (mapStream fst =$ collect_histogram)
                                                    (mapStream snd =$
-                                                    (mapSortAtGroups pqconf circtable (wrapTo . snd) $
+                                                    (let wrap (_nm,ln,_lp) = map (either id id) . wrapTo ln
+                                                     in mapSortAtGroups pqconf Destroyed circtable wrap $
                                                      o (get_label tbl) (add_pg hdr { meta_refs = refs' })))
 
        let do_copy = progressBam "Copying junk at" refs' 0x8000 debug ><>
@@ -394,9 +385,23 @@ clean_multi_flags b = return $ if extAsInt 1 "HI" b /= 1 then Nothing else Just 
 
 -- | Groups sorted records and selectively maps a function over some of
 -- these groups, while preserving sorting.
+--
+-- This function is applied twice, once for the normalization phase and
+-- once for the wrapping around phase.  Normalization only ever
+-- increases coordinates, so ordering is preserved and we can stream
+-- most of the reads;  this is done if the 'order' parameter is
+-- 'Preserved'.
+--
+-- Wrapping sometimes decreases coordinates, so we need to buffer
+-- everything to restore sorting.  We simply run everything through a
+-- 'PriorityQueue' to get full sorting and controlled external
+-- buffering.  While some microoptimizations are possible, this is easy,
+-- robust, and tunable.
 
-mapSortAtGroups :: MonadIO m => PQ_Conf -> IntMap a -> (a -> BamRec -> [Either BamRec BamRec]) -> Enumeratee [BamRec] [BamRec] m b
-mapSortAtGroups cf m f = eneeCheckIfDonePass no_group
+data Order = Destroyed | Preserved
+
+mapSortAtGroups :: MonadIO m => PQ_Conf -> Order -> IntMap a -> (a -> BamRec -> [BamRec]) -> Enumeratee [BamRec] [BamRec] m b
+mapSortAtGroups cf order m f = eneeCheckIfDonePass no_group
   where
     no_group k (Just e) = idone (liftI k) $ EOF (Just e)
     no_group k Nothing  = tryHead >>= maybe (idone (liftI k) $ EOF Nothing) (\a -> no_group_1 a k Nothing)
@@ -408,22 +413,55 @@ mapSortAtGroups cf m f = eneeCheckIfDonePass no_group
             Just arg -> do pq <- liftIO . pushTo makePQ $ f arg a
                            cont_group (b_rname a) arg pq k Nothing
 
-    cont_group _rn _arg _bbs k (Just  e) = idone (liftI k) $ EOF (Just e)
+    cont_group _rn _arg _pq k (Just  e) = idone (liftI k) $ EOF (Just e)
     cont_group  rn  arg  pq k  Nothing  = tryHead >>= maybe flush_eof check1
       where
-        flush_eof  = lift (enumPQ pq (liftI k))
-        flush_go a = lift (enumPQ pq (liftI k)) >>= eneeCheckIfDonePass (no_group_1 a)
+        flush_eof  = enumPQ (const $ return                            ) (Refseq maxBound, maxBound) pq k
+        flush_go a = enumPQ (const $ eneeCheckIfDonePass (no_group_1 a)) (Refseq maxBound, maxBound) pq k
         check1 a | b_rname a == rn = do pq' <- liftIO . pushTo pq $ f arg a
-                                        cont_group rn arg pq' k Nothing
+                                        case order of
+                                          Preserved -> enumPQ (eneeCheckIfDonePass . cont_group rn arg) (Refseq 0, 0) pq' k
+                                          Destroyed -> cont_group rn arg pq' k Nothing
                  | otherwise       = flush_go a
 
     b_rname_int = fromIntegral . unRefseq . b_rname
 
-    pushTo :: PQ BySelfPos -> [Either BamRec BamRec] -> IO (PQ BySelfPos)
-    pushTo = foldM (\q a -> either packBam packBam a >>= \b -> enqueuePQ cf (BySelfPos b) q)
+    pushTo :: PQ BySelfPos -> [BamRec] -> IO (PQ BySelfPos)
+    pushTo = foldM (\q a -> packBam a >>= \b -> enqueuePQ cf (BySelfPos b) q)
 
-    enumPQ :: Monad m => PQ BySelfPos -> Enumerator [BamRec] m b
-    enumPQ pq it = case viewMinPQ pq of
-        Nothing -> return it
-        Just (BySelfPos r, pq') -> enumPure1Chunk [unpackBam r] it >>= enumPQ pq'
+    -- Flushes from the PQ anything with position less than 'pos'.
+    enumPQ :: Monad m
+           => (PQ BySelfPos -> Iteratee [BamRec] m b
+                    -> Iteratee [BamRec] m (Iteratee [BamRec] m b))
+           -> (Refseq, Int) -> PQ BySelfPos
+           -> (Stream  [BamRec] -> Iteratee [BamRec] m b)
+           -> Iteratee [BamRec] m (Iteratee [BamRec] m b)
+    enumPQ ke pos pq k = case viewMinPQ pq of
+        Just (BySelfPos r, pq')
+            | br_self_pos r < pos
+                -> eneeCheckIfDone (enumPQ ke pos pq') . k $ Chunk [unpackBam r]
+        _       -> ke pq (liftI k)
+
+
+-- | Normalize a read's alignment to fall into the "forward canonical
+-- region" of [e..e+l].  Takes the name of the reference sequence, its
+-- length and its padded length.  This normalization is ensured to work
+-- (doesn't need information from the mate) and always increases
+-- coordinates.
+normalizeFwd :: Seqid -> Int -> Int -> BamRec -> BamRec
+normalizeFwd nm lnat lpad b = b { b_pos  = norm $ b_pos  b
+                                , b_mpos = norm $ b_mpos b
+                                , b_mapq = if dups_are_fine then Q 37 else b_mapq b
+                                , b_exts = if dups_are_fine then deleteE "XA" (b_exts b) else b_exts b }
+  where
+    dups_are_fine  = all_match_XA (extAsString "XA" b)
+    all_match_XA s = case S.split ';' s of [xa1, xa2] | S.null xa2 -> one_match_XA xa1
+                                           [xa1]                   -> one_match_XA xa1
+                                           _                       -> False
+    one_match_XA s = case S.split ',' s of (sq:pos:_) | sq == nm   -> pos_match_XA pos ; _ -> False
+    pos_match_XA s = case S.readInt s   of Just (p,z) | S.null z   -> int_match_XA p ;   _ -> False
+    int_match_XA p | p >= 0    = norm  (p-1) == norm (b_pos b) && not (isReversed b)
+                   | otherwise = norm (-p-1) == norm (b_pos b) && isReversed b
+
+    norm p = o + (p-o) `mod` lnat where o = lpad - lnat
 
