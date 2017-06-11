@@ -20,10 +20,6 @@ In the end, the code will work...
    and repaired.
  - awkwardly, if sorting is violated, flags are wrong or widows are
    the rule, because then it degenerates to a full sort by qname.
-
-TODO:
- . a companion program that sorts would be cool, but it should be an
-   opportunistic sort that is fast on almost sorted files. (How?)
 -}
 
 import Bio.Bam                           hiding ( mergeInputs, combineCoordinates )
