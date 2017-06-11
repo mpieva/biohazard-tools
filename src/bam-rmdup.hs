@@ -1,5 +1,3 @@
--- TODO: PQ_Conf needs command line options.
-
 import Bio.Bam
 import Bio.Bam.Rmdup
 import Bio.Prelude
@@ -34,7 +32,8 @@ data Conf = Conf {
     putHistogram :: U.Vector Int -> IO (),
     debug :: String -> IO (),
     which :: Which,
-    circulars :: Refs -> IO (IntMap (Seqid,Int), Refs) }
+    circulars :: Refs -> IO (IntMap (Seqid,Int), Refs),
+    pqconf :: PQ_Conf }
 
 -- | Which reference sequences to scan
 data Which = Allrefs | Some Refseq Refseq | Unaln deriving Show
@@ -55,7 +54,8 @@ defaults = Conf { output = Nothing
                 , putHistogram = \_ -> return ()
                 , debug = \_ -> return ()
                 , which = Allrefs
-                , circulars = \rs -> return (I.empty, rs) }
+                , circulars = \rs -> return (I.empty, rs)
+                , pqconf = PQ_Conf 1000 200 "/var/tmp/" undefined }
 
 options :: [OptDescr (Conf -> IO Conf)]
 options = [
@@ -63,19 +63,22 @@ options = [
     Option  "O" ["output-lib"]     (ReqArg set_lib_out "PAT") "Write each lib to file named following PAT",
     Option  "H" ["histogram"]      (ReqArg set_hist   "FILE") "Write histogram to FILE",
     Option  [ ] ["debug"]          (NoArg  set_debug_out)     "Write textual debugging output",
-    Option  "z" ["circular"]       (ReqArg add_circular "CHR:LEN") "Refseq CHR is circular with length LEN",
+    Option  "z" ["circular"]  (ReqArg add_circular "CHR:LEN") "Refseq CHR is circular with length LEN",
     Option  "R" ["refseq"]         (ReqArg set_range "RANGE") "Read only range of reference sequences",
     Option  "p" ["improper-pairs"] (NoArg  set_improper)      "Include improper pairs",
     Option  "u" ["unaligned"]      (NoArg  set_unaligned)     "Include unaligned reads and pairs",
     Option  "1" ["single-read"]    (NoArg  set_single)        "Pretend there is no second mate",
     Option  "m" ["multimappers"]   (NoArg  set_multi)         "Process multi-mappers (by dropping secondary alignments)",
     Option  "c" ["cheap"]          (NoArg  set_cheap)         "Cheap computation: skip the consensus calling",
-    Option  "k" ["keep","mark-only"](NoArg set_keep)          "Mark duplicates, but include them in output",
+    Option  "k" ["keep","mark-only"] (NoArg set_keep)         "Mark duplicates, but include them in output",
     Option  "Q" ["max-qual"]       (ReqArg set_qual "QUAL")   "Set maximum quality after consensus call to QUAL",
     Option  "l" ["min-length"]     (ReqArg set_len "LEN")     "Discard reads shorter than LEN",
     Option  "q" ["min-mapq"]       (ReqArg set_mapq "QUAL")   "Discard reads with map quality lower than QUAL",
     Option  "s" ["no-strand"]      (NoArg  set_no_strand)     "Strand of alignments is uninformative",
     Option  "r" ["ignore-rg"]      (NoArg  set_no_rg)         "Ignore read groups when looking for duplicates",
+    Option  "M" ["max-memory"]     (ReqArg set_max_mem "MB")  "Use at most MB megabytes per queue",
+    Option  "L" ["max-merge"]      (ReqArg set_max_mrg "NUM") "Merge at most NUM files at a time",
+    Option  "T" ["temp-path"]    (ReqArg set_temp_pth "PATH") "Store temporary files in PATH",
     Option  "v" ["verbose"]        (NoArg  set_verbose)       "Print more diagnostics",
     Option "h?" ["help","usage"]   (NoArg  (const usage))     "Display this message",
     Option "V"  ["version"]        (NoArg  (const vrsn))      "Display version number and exit" ]
@@ -98,6 +101,9 @@ options = [
     set_no_rg      c =                    return $ c { get_label = get_no_library }
     set_multi      c =                    return $ c { clean_multimap = clean_multi_flags }
     set_hist    fp c =                    return $ c { putHistogram = writeHistogramFile fp }
+    set_max_mem  a c = readIO a >>= \x -> return $ c { pqconf = (pqconf c) { max_mb    = x } }
+    set_max_mrg  a c = readIO a >>= \x -> return $ c { pqconf = (pqconf c) { max_merge = x } }
+    set_temp_pth a c =                    return $ c { pqconf = (pqconf c) { temp_path = a } }
 
     set_range    a c
         | a == "A" || a == "a" = return $ c { which = Allrefs }
@@ -180,9 +186,6 @@ data Counts = Counts { tin          :: !Int
                      , good_singles :: !Int
                      , good_total   :: !Int }
 
-pqconf = PQ_Conf 1000 200 "/var/tmp/" $ hPutStrLn stderr
-
-
 main :: IO ()
 main = do
     args <- getArgs
@@ -190,6 +193,9 @@ main = do
     let (opts, files, errors) = getOpt Permute options args
     unless (null errors) $ mapM_ (hPutStrLn stderr) errors >> exitFailure
     Conf{..} <- foldr (>=>) return opts defaults
+
+    let pqconf1 = pqconf { croak = debug, max_mb = 1 +      max_mb pqconf `div` 16 }
+        pqconf2 = pqconf { croak = debug, max_mb = 1 + 15 * max_mb pqconf `div` 16 }
 
     add_pg <- addPG $ Just version
     mergeInputRanges which files >=> run $ \hdr -> do
@@ -216,7 +222,7 @@ main = do
                        takeWhileE is_halfway_aligned                                                      =$
                        concatMapStreamM cleanup                                                           =$
                        ( let norm (nm,lnat,lpad) r = [ normalizeFwd nm lnat lpad r ]
-                         in mapSortAtGroups pqconf Preserved circtable norm )                             =$
+                         in mapSortAtGroups pqconf1 Preserved circtable norm )                             =$
                        filterStream (\b -> b_mapq b >= min_qual)                                          =$
                        case output of
                             Nothing -> rmdup (get_label tbl) strand_preserved (cheap_collapse' keep_all)  =$
@@ -229,7 +235,7 @@ main = do
                                                    (mapStream fst =$ collect_histogram)
                                                    (mapStream snd =$
                                                     (let wrap (_nm,ln,_lp) = map (either id id) . wrapTo ln
-                                                     in mapSortAtGroups pqconf Destroyed circtable wrap $
+                                                     in mapSortAtGroups pqconf2 Destroyed circtable wrap $
                                                      o (get_label tbl) (add_pg hdr { meta_refs = refs' })))
 
        let do_copy = progressBam "Copying junk at" refs' 0x8000 debug ><>
