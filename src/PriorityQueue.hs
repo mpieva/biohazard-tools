@@ -25,8 +25,9 @@ import Bio.Prelude
 import Bio.Bam                   hiding ( Stream )
 import Codec.Compression.Snappy         ( compress, decompress )
 import Data.Binary                      ( Binary, get, put )
+import Data.Binary.Builder              ( toLazyByteString )
 import Data.Binary.Get                  ( runGetOrFail )
-import Data.Binary.Put                  ( runPut )
+import Data.Binary.Put                  ( execPut )
 import Foreign.C.Error                  ( throwErrnoIfMinus1 )
 import Foreign.C.String                 ( withCAString )
 import Foreign.C.Types                  ( CChar(..), CInt(..), CSize(..) )
@@ -153,7 +154,7 @@ flushPQ cfg PQ{..} = do
 spillTo :: (Ord a, Sized a) => PQ_Conf -> Int -> [a] -> [( Fd, SkewHeap (Stream a) )] -> IO [( Fd, SkewHeap (Stream a) )]
 spillTo cfg g as [                         ] = mkEmptySpill cfg >>= spillTo cfg g as . (:[])
 spillTo cfg g as (( fd, streams ) : spills ) = do
-    str <- externalize fd . runPut . foldMap put $ as
+    str <- externalize fd . toLazyByteString . foldMap (execPut . put) $ as
     let streams' = insertH (decodeStream str) streams
     pos <- fdSeek fd RelativeSeek 0
     croak cfg $ "Gen " ++ shows g " has " ++ shows (sizeH streams') " streams (fd "
