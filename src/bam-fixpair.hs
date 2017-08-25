@@ -587,14 +587,14 @@ data BamPair = Singleton BamRaw | Pair BamRaw BamRaw | LoneMate BamRaw
 mergeInputs :: (MonadIO m, MonadMask m) => [FilePath] -> Enumerator' BamMeta [BamPair] m a
 mergeInputs = go0
   where
-    go0 [        ] = enumG $ enumHandle defaultBufSize stdin
+    go0 [        ] = enumG $ enumFd defaultBufSize stdInput
     go0 (fp0:fps0) = go fp0 fps0
 
     go fp [       ] = enum1 fp
     go fp (fp1:fps) = mergeEnums' (go fp1 fps) (enum1 fp) combineCoordinates
 
-    enum1 "-" = enumG $ enumHandle defaultBufSize stdin
-    enum1  fp = enumG $ enumFile   defaultBufSize    fp
+    enum1 "-" = enumG $ enumFd   defaultBufSize stdInput
+    enum1  fp = enumG $ enumFile defaultBufSize    fp
 
     enumG ee k = ee >=> run $ joinI $ decodeAnyBam $ \h -> quick_pair (k h)
 

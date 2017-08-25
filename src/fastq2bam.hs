@@ -111,8 +111,8 @@ mergeDuals lowq highq (r1, Nothing) = trimBam lowq highq default_fwd_adapters r1
 fromFastq :: (MonadIO m, MonadMask m) => FilePath -> Enumerator [BamRec] m a
 fromFastq fp = enumAny fp $= enumInflateAny $= parseFastqCassava $= mapStream removeWarts
   where
-    enumAny "-" = enumHandle defaultBufSize stdin
-    enumAny  f  = enumFile   defaultBufSize   f
+    enumAny "-" = enumFd   defaultBufSize stdInput
+    enumAny  f  = enumFile defaultBufSize   f
 
 enum_input :: (MonadIO m, MonadMask m) => Input -> Enumerator [UpToTwo BamRec] m a
 enum_input (Input r1 mr2 mi1 mi2 il1) = enum $= mapStream (addIdx il1)

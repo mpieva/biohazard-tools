@@ -43,7 +43,7 @@ usage = do pn <- getProgName
 main :: IO ()
 main = getArgs >>= \args ->
        when (null args) usage >>= \_ ->
-       enumHandle defaultBufSize stdin >=> run $
+       enumFd defaultBufSize stdInput >=> run $
        joinI $ decodeAnyBam $ \hdr -> do
            add_pg <- liftIO (addPG $ Just version)
            let (ltab, seqs') = parseArgs (meta_refs hdr) args

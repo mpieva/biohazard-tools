@@ -39,7 +39,7 @@ Test-suite bam-sort
   Other-Extensions:    CPP, Rank2Types
   Hs-Source-Dirs:      src
   Other-modules:       Paths_biohazard_tools, PriorityQueue
-  Build-depends:       base                     >= 4.6 && < 4.10,
+  Build-depends:       base                     >= 4.6 && < 4.11,
                        binary                   >= 0.7 && < 0.9,
                        biohazard                >= 0.6.15 && < 0.7,
                        bytestring               >= 0.10.2 && < 0.11,
@@ -56,11 +56,11 @@ Executable bam-fixpair
   Hs-Source-Dirs:      src
   Other-modules:       Paths_biohazard_tools, PriorityQueue
   Build-depends:       async                    >= 2.0 && < 2.2,
-                       base                     >= 4.6 && < 4.10,
+                       base                     >= 4.6 && < 4.11,
                        binary                   >= 0.7 && < 0.9,
                        biohazard                >= 0.6.15 && < 0.7,
                        bytestring               >= 0.10.2 && < 0.11,
-                       process                  >= 1.0 && < 1.5,
+                       process                  >= 1.0 && < 1.7,
                        snappy                   == 0.2.*,
                        stm                      == 2.4.*,
                        unix                     >= 2.5 && < 2.8,
@@ -73,7 +73,7 @@ Executable bam-mangle
   Default-Extensions:  NoImplicitPrelude, OverloadedStrings, BangPatterns
   Hs-Source-Dirs:      src
   Other-modules:       Paths_biohazard_tools
-  Build-depends:       base                     >= 4.6 && < 4.10,
+  Build-depends:       base                     >= 4.6 && < 4.11,
                        biohazard                >= 0.6.15 && < 0.7,
                        bytestring               >= 0.10.2 && < 0.11,
                        parsec                   == 3.*,
@@ -91,7 +91,7 @@ Executable bam-meld
                        BangPatterns, FlexibleContexts
   Hs-Source-Dirs:      src
   Other-modules:       Paths_biohazard_tools
-  Build-depends:       base                     >= 4.6 && < 4.10,
+  Build-depends:       base                     >= 4.6 && < 4.11,
                        biohazard                >= 0.6.15 && < 0.7,
                        bytestring               >= 0.10.2 && < 0.11,
                        containers               >= 0.4.1 && < 0.6
@@ -103,7 +103,7 @@ Executable bam-resample
   Default-Extensions:  NoImplicitPrelude, OverloadedStrings, BangPatterns
   Hs-Source-Dirs:      src
   Other-modules:       Paths_biohazard_tools
-  Build-depends:       base                     >= 4.6 && < 4.10,
+  Build-depends:       base                     >= 4.6 && < 4.11,
                        biohazard                >= 0.6.15 && < 0.7,
                        bytestring               >= 0.10.2 && < 0.11,
                        random                   >= 1.0 && < 1.2
@@ -115,7 +115,7 @@ Executable bam-rewrap
   Default-Extensions:  NoImplicitPrelude, OverloadedStrings, BangPatterns
   Hs-Source-Dirs:      src
   Other-modules:       Paths_biohazard_tools
-  Build-depends:       base                     >= 4.6 && < 4.10,
+  Build-depends:       base                     >= 4.6 && < 4.11,
                        biohazard                >= 0.6.15 && < 0.7,
                        bytestring               >= 0.10.2 && < 0.11,
                        containers               >= 0.4.1 && < 0.6
@@ -127,8 +127,8 @@ Executable bam-rmdup
   Default-Extensions:  NoImplicitPrelude, OverloadedStrings,
                        BangPatterns, RecordWildCards, FlexibleContexts
   Hs-Source-Dirs:      src
-  Other-modules:       Paths_biohazard_tools
-  Build-depends:       base                     >= 4.6 && < 4.10,
+  Other-modules:       Paths_biohazard_tools, PriorityQueue
+  Build-depends:       base                     >= 4.6 && < 4.11,
                        binary                   >= 0.7 && < 0.9,
                        biohazard                >= 0.6.15 && < 0.7,
                        bytestring               >= 0.10.2 && < 0.11,
@@ -144,7 +144,7 @@ Executable bam-trim
   Default-Extensions:  NoImplicitPrelude, OverloadedStrings, BangPatterns
   Hs-Source-Dirs:      src
   Other-modules:       Paths_biohazard_tools
-  Build-depends:       base                     >= 4.6 && < 4.10,
+  Build-depends:       base                     >= 4.6 && < 4.11,
                        biohazard                >= 0.6.15 && < 0.7,
                        bytestring               >= 0.10.2 && < 0.11
 
@@ -155,7 +155,7 @@ Executable fastq2bam
   Default-Extensions:  NoImplicitPrelude, OverloadedStrings, BangPatterns
   Hs-Source-Dirs:      src
   Other-modules:       Paths_biohazard_tools
-  Build-depends:       base                     >= 4.6 && < 4.10,
+  Build-depends:       base                     >= 4.6 && < 4.11,
                        biohazard                >= 0.6.15 && < 0.7,
                        bytestring               >= 0.10.2 && < 0.11,
                        containers               >= 0.4.1 && < 0.6,
