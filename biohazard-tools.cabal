@@ -64,7 +64,7 @@ Executable bam-fixpair
                        snappy                   == 0.2.*,
                        stm                      == 2.4.*,
                        unix                     >= 2.5 && < 2.8,
-                       vector                   >= 0.10 && < 0.13
+                       vector                   >= 0.11 && < 0.13
 
 Executable bam-mangle
   Main-is:             bam-mangle.hs
@@ -81,7 +81,7 @@ Executable bam-mangle
                        regex-posix              >= 0.90 && < 1.0,
                        transformers             >= 0.4.1 && < 0.6,
                        unordered-containers     >= 0.2.3 && < 0.3,
-                       vector                   >= 0.10 && < 0.13
+                       vector                   >= 0.11 && < 0.13
 
 Executable bam-meld
   Main-is:             bam-meld.hs
@@ -135,7 +135,7 @@ Executable bam-rmdup
                        containers               >= 0.4.1 && < 0.6,
                        snappy                   == 0.2.*,
                        unordered-containers     >= 0.2.3 && < 0.3,
-                       vector                   >= 0.10 && < 0.13
+                       vector                   >= 0.11 && < 0.13
 
 Executable bam-trim
   Main-is:             bam-trim.hs
@@ -159,6 +159,6 @@ Executable fastq2bam
                        biohazard                >= 0.6.15 && < 0.7,
                        bytestring               >= 0.10.2 && < 0.11,
                        containers               >= 0.4.1 && < 0.6,
-                       vector                   >= 0.10 && < 0.13
+                       vector                   >= 0.11 && < 0.13
 
 -- :vim:tw=132:
