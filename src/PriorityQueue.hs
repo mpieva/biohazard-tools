@@ -23,9 +23,7 @@ module PriorityQueue (
 
 import Bio.Prelude
 import Bio.Bam                   hiding ( Stream )
-import Codec.Compression.Snappy         ( compress, decompress )
 import Data.Binary                      ( Binary, get, put )
-import Data.Binary.Builder              ( toLazyByteString )
 import Data.Binary.Get                  ( runGetOrFail )
 import Data.Binary.Put                  ( execPut )
 import Foreign.C.Error                  ( throwErrnoIfMinus1 )
@@ -34,7 +32,9 @@ import Foreign.C.Types                  ( CChar(..), CInt(..), CSize(..) )
 import System.IO                        ( SeekMode(RelativeSeek) )
 
 import qualified Data.ByteString                as S
+import qualified Data.ByteString.Builder.Internal as B
 import qualified Data.ByteString.Internal       as S ( createAndTrim )
+import qualified Data.ByteString.Unsafe         as S ( unsafeUseAsCStringLen )
 import qualified Data.ByteString.Lazy           as L
 import qualified Data.ByteString.Lazy.Internal  as L ( ByteString(..) )
 
@@ -154,7 +154,7 @@ flushPQ cfg PQ{..} = do
 spillTo :: (Ord a, Sized a) => PQ_Conf -> Int -> [a] -> [( Fd, SkewHeap (Stream a) )] -> IO [( Fd, SkewHeap (Stream a) )]
 spillTo cfg g as [                         ] = mkEmptySpill cfg >>= spillTo cfg g as . (:[])
 spillTo cfg g as (( fd, streams ) : spills ) = do
-    str <- externalize fd . toLazyByteString . foldMap (execPut . put) $ as
+    str <- externalize fd . foldMap (execPut . put) $ as
     let streams' = insertH (decodeStream str) streams
     pos <- fdSeek fd RelativeSeek 0
     croak cfg $ "Gen " ++ shows g " has " ++ shows (sizeH streams') " streams (fd "
@@ -177,12 +177,13 @@ mkEmptySpill cfg = do pn <- getProgName
 -- in ascending order and written to a new segment in a temporary file.
 -- That segment is then converted back to a lazy bytestring, which is
 -- returned.  (Yes, evil lazy IO.)
-externalize :: Fd -> L.ByteString -> IO L.ByteString
+externalize :: Fd -> B.Builder -> IO L.ByteString
 externalize fd s = do
         pos0 <- fdSeek fd RelativeSeek 0
-        fdPutLazy fd $ snappy s
+        fdPutLazy fd $ lz4 $ B.toLazyByteStringWith
+            (B.untrimmedStrategy lz4_bsize lz4_bsize) L.empty s
         pos1 <- fdSeek fd RelativeSeek 0
-        unsnappy <$> fdGetLazy fd pos0 pos1
+        unLz4 <$> fdGetLazy fd pos0 pos1
 
 fdGetLazy :: Fd -> FileOffset -> FileOffset -> IO L.ByteString
 fdGetLazy fd p0 p1
@@ -300,24 +301,62 @@ instance Ord a => Ord (Stream a) where
     Cons a _ `compare` Cons b _ = compare a b
 
 
--- This could be more efficient, but that requires access to the
--- internals of snappy.  One Chunk per compressed segment would be
--- ideal.
-snappy :: L.ByteString -> L.ByteString
-snappy = L.concat . map snap . L.toChunks
-  where
-    snap s | S.null s = L.empty
-    snap s = let t = compress $ S.take 0xffff s
-             in fromIntegral (S.length t .&. 0xff) `L.cons`
-                fromIntegral (S.length t `shiftR` 8) `L.cons`
-                L.fromStrict t `L.append` snap (S.drop 0xffff s)
+lz4_bsize, lz4_csize :: Int
+lz4_bsize = 16*1024*1024 - 128
+lz4_csize = 16*1000*1000
 
-unsnappy :: L.ByteString -> L.ByteString
-unsnappy s | L.null s = L.empty
-unsnappy s = let l = fromIntegral (L.index s 0) .|.
-                     fromIntegral (L.index s 1) `shiftL` 8
-             in L.Chunk (decompress (L.toStrict (L.take l (L.drop 2 s))))
-                        (unsnappy (L.drop (l+2) s))
+
+-- We just compress and frame each 'Chunk' individually.
+-- 'toLazyByteStringWith' should give us 'Chunk's of reasonable size;
+-- but we enforce a maximum size to make decompression easier.
+lz4 :: L.ByteString -> L.ByteString
+lz4 = L.foldrChunks go L.empty
+  where
+    go s | S.null s               = id
+         | S.length s > lz4_csize = go (S.take lz4_csize s) . go (S.drop lz4_csize s)
+         | otherwise              = L.Chunk . unsafePerformIO $ do
+                S.createAndTrim lz4_bsize $ \pdest -> do
+                    S.unsafeUseAsCStringLen s $ \(psrc,srcLen) -> do
+                        dLen <- c_lz4 psrc (plusPtr pdest 4)
+                                      (fromIntegral srcLen) (fromIntegral lz4_bsize)
+                        -- place compressed size at beginning (slow and portable)
+                        pokeByteOff pdest 0 (fromIntegral (dLen `shiftR`  0) :: Word8)
+                        pokeByteOff pdest 1 (fromIntegral (dLen `shiftR`  8) :: Word8)
+                        pokeByteOff pdest 2 (fromIntegral (dLen `shiftR` 16) :: Word8)
+                        pokeByteOff pdest 3 (fromIntegral (dLen `shiftR` 24) :: Word8)
+                        return $ fromIntegral dLen + 4
+
+foreign import ccall unsafe "lz4.h LZ4_compress_default"
+    c_lz4 :: Ptr CChar  -- source
+          -> Ptr CChar  -- dest
+          -> CInt       -- sourceSize
+          -> CInt       -- maxDestSize
+          -> IO CInt    -- number of bytes written
+
+
+unLz4 :: L.ByteString -> L.ByteString
+unLz4 s | L.null  s = L.empty
+        | otherwise = L.Chunk ck' . unLz4 $ L.drop (l+4) s
+  where
+    -- size (slow and portable)
+    l   = fromIntegral (L.index s 0) `shiftL`  0 .|.
+          fromIntegral (L.index s 1) `shiftL`  8 .|.
+          fromIntegral (L.index s 2) `shiftL` 16 .|.
+          fromIntegral (L.index s 3) `shiftL` 24
+
+    ck  = L.toStrict $ L.take (l+4) s
+    ck' = unsafePerformIO $
+             S.createAndTrim lz4_bsize $ \pdst ->
+                S.unsafeUseAsCStringLen ck $ \(psrc,srcLen) ->
+                    fromIntegral <$> c_unlz4 (plusPtr psrc 4) pdst
+                            (fromIntegral srcLen - 4) (fromIntegral lz4_bsize)
+
+foreign import ccall unsafe "lz4.h LZ4_decompress_safe"
+    c_unlz4 :: Ptr CChar  -- source
+            -> Ptr Word8  -- dest
+            -> CInt       -- sourceSize
+            -> CInt       -- maxDestSize
+            -> IO CInt    -- number of bytes written
 
 
 data ByQName = ByQName { _bq_hash :: !Int
@@ -377,3 +416,4 @@ br_self_pos = (b_rname &&& b_pos) . unpackBam
 
 br_copy :: BamRaw -> BamRaw
 br_copy br = bamRaw (virt_offset br) $! S.copy (raw_data br)
+
