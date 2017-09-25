@@ -1,0 +1,321 @@
+.TH COORD2ANNO "1" "Feb 2011" "coord2anno" "User Commands"
+.SH NAME
+coord2anno \- translate genome coordinates to annotations
+.SH SYNPOSIS
+.BI "coord2anno [-o " output_file "] [-O " output_pattern "] 
+.BI " [-a " annotation_file " ...] [-A " legacy_annotation_file " ...]"
+.BI " [-c " chromosome_file "] [\-covered|\-partial|\-inclusive|\-nearest] "
+.BI " [-p " port "] [-H " host "] [-q]"
+.BI "" region_file " ..."
+
+.SH DESCRIPTION
+.I coord2anno
+reads one or more tables that maps genomic regions to annotations, then
+reads one or more files containing regions, and annotates those regions.
+Region files can be 
+.SM SAM, BAM,
+a simple table, or a 
+.SM FASTA
+file that encodes
+regions in sequence identifiers; coordinates can be either 
+.SM UCSC
+or
+.I Ensembl
+style, or a mix of both.
+
+.SH OPTIONS
+.IP "\fB-o, \-output \fIoutput_file\fR"
+Defines the output file.  If neither \fB\-o\fR nor \fB\-O\fR is given,
+output is sent to stdout.
+
+.IP "\fB-O, \-output-pattern \fIpattern\fR"
+Defines a pattern for the construction of output file names.  One output
+file is created for each input file.  The output file name is obtained
+by replacing the strings \fI%p\fR in \fIpattern\fR by the path of the
+input file, \fI%n\fR by its name without extension, and \fI%e\fR by its
+extension.
+
+.IP "\fB-a, \-annotation \fIannotation_file\fR"
+Defines an annotation file.  Annotations must be in BED format and are
+read before any other processing starts.  Multiple annotations may be
+given, the union of the results is output.
+
+.IP "\fB-A, \-legacy-annotation \fIannotation_file\fR"
+Defines an annotation files just like
+.BR \-annotation ,
+but this file is in the legacy five column format.  Using this option
+is discouraged.
+
+.IP "\fB-c, \-chroms \fIchromosome_file\fR"
+Defines the chromosome translation table.  If a translation table is
+given, 
+.I coord2anno
+tries to translate
+.I Ensembl
+names into 
+.SM UCSC
+names, which allows input to be a mix of
+.SM UCSC
+and
+.I Ensembl
+data.  Without a translation table, either convention can be used, but
+it must be used consistently.
+
+.IP "\fB-C, \-chroms-internal \fIchromosome_table_name\fR"
+Same as 
+.IR \-chroms ,
+but used in internal named table.  Call with an invalid name to get a
+list of available tables.
+
+.IP "\fB-s, \-nostrand\fR"
+Ignore strand information in region files.  This is primarily useful
+when annotating 
+.SM BAM 
+files, which always contain strand information, when this information
+isn't actually useful.
+
+.IP "\fB\-covered\fR"
+Output only annotations that are fully contained in a region.
+
+.IP "\fB\-partial\fR"
+Output only annotations that overlap into a region, but are not fully
+contained in it.
+
+.IP "\fB\-inclusive\fR"
+Output annotations that overlap a region at least partially.  This is
+the default.
+
+.IP "\fB\-nearest\fR"
+Output partial and total overlaps as with
+.BR \-inclusive ,
+but also output the nearest annotation for each region that does not
+overlap any annotation.  The (signed) distance is appended to the
+annotation, separated by an '@' character.
+
+.IP "\fB-h, \-host\fR"
+Switch to client mode and and set the server host to connect to.  See
+below under
+.IR "client-server mode" .
+
+.IP "\fB-p, \-port\fR"
+In client mode, set the port to connect to.  Else switch to server mode
+and set the port to listen on.  See below under
+.IR "client-server mode" .
+
+.IP "\fB-q, \-quiet\fR"
+Operate silently, without progress reports.
+
+.IP "\fB-h, -?, \-help, \-usage\fR"
+Print a summary of command line options.
+
+.SH "FILES"
+.SS "Annotation Table"
+The annotation table should be in
+.SM BED
+format.  For
+.I coord2anno
+to do anything useful, the
+.SM BED
+file must have at least 4 columns, since column 4 ("name") is used as
+the annotation.  If the
+.SM BED
+file has 6 or more columns, column 6 ("strand") is used to make the
+annotation strand specific.  Empty lines, lines starting with a hash
+mark ('#') and track definition lines (those starting with the word
+"track") are ignored.
+
+.I coord2anno
+also understands an ad-hoc five column format.  This was a bad idea and
+these files should be phased out.  Therefore, they will not be
+documented here.  If you were smart enough to make five column tables,
+you are smart enough to turn them into
+.SM BED
+files even without documentation, so please do that.  In the meantime,
+they can still be loaded through the 
+.B \-legacy-annotation
+option.
+
+
+.SS "Chromosome Translation Table"
+The chromosome translation table is a text file with one entry per line
+and three whitespace separated columns.  The first line can optionally
+be a header line starting with '#', which is ignored.  The fields
+are:
+.IP \[bu] 2
+Ensembl 
+.SM ID
+(a number or an accession number)
+.IP \[bu] 2
+.SM UCSC ID
+(chr-something)
+.IP \[bu] 2
+Offset minus one
+
+The offset field is 0 for ordinary chromosomes where just the name needs
+to be mapped.  To map contigs with accession numbers to chromosomes
+.IR "" "(" "chr_random" " or " "chrUn" "),"
+the offset is the zero-based start position in the concatenated
+UCSC-style chromosome.  Note that chromosome translation is only applied
+to legacy annotation files.
+
+.SS "Region Files"
+.I coord2anno 
+tries to infer the format of region files automatically.  Compressed and
+uncompressed
+.SM BAM
+files are recognized from their header.  If a file starts with a '>', it
+is interpreted as
+.SM FASTA.
+If a file starts with an '@', or if the first line has 11 or more fields
+and field 5 can be interpreted as a
+.SM CIGAR 
+line, it is interpreted as a
+.SM SAM
+file.  Anything else is read as a
+.SM BED
+file.
+
+There used to be support for a custom five-column region file, which has
+been dropped in favor of 
+.SM BED.
+If you were smart enough to generate the five-column file, you are smart
+enough to convert it to 
+.SM BED.
+You are encouraged to do so.
+
+
+.SS "FASTA File With Regions"
+If a region file begins with '>', it is interpreted as a 
+.SM FASTA
+file where the sequence identifiers contain region information.  All
+identifiers must contain at least four fields separated by colons (':').
+These fields are:
+.IP \[bu] 2
+chromosome
+.IP \[bu] 2
+strand
+.IP \[bu] 2
+start position
+.IP \[bu] 2
+end position
+
+.SS "Output Table"
+The output table a text file with one entry per line and two
+whitespace separated columns.  The first line starts with '#' and
+contains a descriptive header.  The first column contains the region's
+id, which is the complete sequence identifier if input came from
+.SM FASTA
+or the contents of the first column if input came from a table, the
+second column contains all annotations, separated by colons (':').
+Regions with no annotation at all are suppressed from the output.
+
+
+.SH "NOTES"
+.SS "Coordinate Systems"
+Internally, 
+.I coord2anno
+always represents regions as zero-based, half-open intervals.  The same
+convention is used in 
+.SM BAM, BED, FastA
+and legacy five-column files.  In contrast,
+.SM SAM
+uses one-based, closed intervals.
+
+Earlier versions supported a brittle heuristic to infer the conventions
+used in a particular file.  This heuristic has been dropped; please
+convert your legacy files to a standard format and use the conventions
+of that format.  The "chromosomes" in legacy annotation files can still
+be translated from
+.SM Ensembl
+conventions to 
+.SM UCSC
+conventions by providing a translation table.  In this case, one-based,
+closed intervals are translated into zero-based, half-open intervals,
+and an optional offset is applied.
+
+
+.SS "Regions"
+In annotation files, the smaller of the two given coordinates is
+interpreted as start coordinate, the greater as end coordinate.  No
+inference about which strand is annotated is drawn from the relative
+magnitude of the coordinates.
+
+In input files, start coordinates must be less than or equal to end
+coordinates, otherwise the region is interpreted as empty.
+
+Note that in Ensemble style coordinates it is impossible to encode an
+empty region.  In 
+.SM UCSC
+style coordinates, a region with equal start and end coordinates is
+interpreted as empty.  No warning or error is given for empty regions,
+even though they don't make much sense in the context of
+.IR coord2anno .
+
+.SS "Strands"
+Both annotations and regions have an associated strand, but either may
+be unknown.  If an annotation has no known strand, it is understood as
+applying to both strands.  If a region has no known strand, annotations
+are looked up on both strands and the union of them is reported.
+
+The forward strand is always encoded as "+", the reverse strand is
+encoded as "-", and an unknown strand is encoded as "0" or, where
+appropriate, a missing field.
+
+.SS "Client-Server Mode"
+.I coord2anno
+can optionally operate in a client-server mode.  In this mode, the
+server effectively acts as an in-memory cache of annotations.  New
+annotations can be added at any time by simply running the client,
+cached annotations may automatically be evicted from the server at any
+time.
+
+The server is started by running 
+.I coord2anno
+with the 
+.B \-port
+option.  All other options except
+.B \-quiet
+are ignored and the server will listen for connections on the given
+port.
+
+The client is started by running
+.I coord2anno
+with both the
+.B \-host
+and the
+.B \-port
+options.  All other options work exactly as when running in standalone
+mode.  If the server already knows about an annotation file, it will be
+used as is, else the client will upload it.  Note that the set of
+annotations is identified by the file name, so be careful when using
+relative pathnames or shell tricks that generate annotations on the fly.
+
+
+.SH "BUGS"
+There is no way to report only annotations that fully contain a region.
+Note that annotations fully \fIcontained\fR in a region can be reported.
+
+The output file format is ad-hoc.  A future version of
+.I coord2anno
+will probably drop support for custom tables and swap in a standard
+format.
+
+Handling of regions with
+.I start
+greater than 
+.I end
+is inconsistent, but due to historical reasons this is unlikely to get
+fixed.
+
+The handling of
+.I Ensembl
+and 
+.SM UCSC
+coordinate conventions is fragile and difficult to comprehend, but
+there's hardly anything we can do about it.
+
+
+.SH "AUTHOR"
+Written by Udo Stenzel <udo_stenzel@eva.mpg.de>.
+
+

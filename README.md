@@ -48,3 +48,21 @@ in a thoroughly unusable state of the Cabal package collection.  If you get erro
 messages that just don't make sense anymore, please refer to 
 http://www.vex.net/~trebla/haskell/sicp.xhtml; among other useful things, it 
 tells you how to wipe a package database without causing further destruction.
+
+
+Expound
+=======
+
+This is old code that annotates stuff in weird legacy formats (formerly
+called `coord2anno`).  It suffered bitrot and is arguably best replaced
+with `Bedtools`.
+
+The only reason this could ever be useful is because it has a
+client-server mode, which is handy if many small files need to be
+processed and reading the annotation file becomes the bottleneck.
+(Annotation files are frequently big and rather expensive to parse.)
+
+A reimagination would modernize the code, use a broadcast protocol to
+find the server, and make C/S mode completely transparent, implicit and
+optional.  The lookup could even be integrated into bam-mangle to make
+it more flexible.  But for now, the code is barely kept alive.
