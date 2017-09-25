@@ -40,24 +40,17 @@ getRequest = do key <- getWord
                     0 -> StartAnno <$> getString
                     1 -> AddAnno <$> ( (,,,,) <$> getLazyString
                                               <*> getLazyString
-                                              <*> (toSense <$> getWord)
+                                              <*> (toEnum <$> getWord)
                                               <*> getWord
                                               <*> getWord )
                     2 -> return EndAnno
                     _ -> pack (toEnum (key - 3)) <$> getLazyString
                                                  <*> getLazyString
-                                                 <*> (toSense <$> getWord)
+                                                 <*> (toEnum <$> getWord)
                                                  <*> getWord
                                                  <*> getWord
   where
     pack w n m s u v = Anno w (n,m,s,u,v)
-
-    toSense :: Int -> [Sense]
-    toSense 0 = []
-    toSense 1 = [Forward]
-    toSense 2 = [Reverse]
-    toSense _ = [Forward, Reverse]
-
 
 putRequest :: Request -> B.Put
 putRequest (StartAnno name)      = do putWord (0::Int)
@@ -65,23 +58,16 @@ putRequest (StartAnno name)      = do putWord (0::Int)
 putRequest (AddAnno (n,m,s,u,v)) = do putWord (1::Int)
                                       putLazyString n
                                       putLazyString m
-                                      putWord $ fromSense s
+                                      putWord $ fromEnum s
                                       putWord $ u
                                       putWord $ v
 putRequest (EndAnno)             = do putWord (2::Int)
 putRequest (Anno w (n,m,s,u,v))  = do putWord $ fromEnum w + 3
                                       putLazyString n
                                       putLazyString m
-                                      putWord $ fromSense s
+                                      putWord $ fromEnum s
                                       putWord $ u
                                       putWord $ v
-
-fromSense :: [Sense] -> Int
-fromSense []        = 0
-fromSense [Forward] = 1
-fromSense [Reverse] = 2
-fromSense _         = 3
-
 
 getResponse :: B.Get Response
 getResponse = do key <- getWord

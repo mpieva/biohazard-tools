@@ -6,9 +6,9 @@ import System.IO
 
 import qualified Data.ByteString.Char8              as S
 import qualified Data.ByteString.Lazy.Char8         as L
-import qualified Data.Map                           as M
+import qualified Data.HashMap.Strict                as M
 
-import Diet
+import Diet ( addI )
 import Symtab
 
 data AnnoSet = Hits [S.ByteString] | NearMiss S.ByteString Int deriving Show
@@ -41,7 +41,7 @@ make_summary annotated_files = do
     putChar '\n'
 
     sequence_ [ do S.putStr anno
-                   sequence_ [ do let v = M.findWithDefault 0 anno counts
+                   sequence_ [ do let v = M.lookupDefault 0 anno counts
                                   putChar '\t' ; putStr (show v)
                              | counts <- mm ]
                    putChar '\n'
@@ -49,7 +49,7 @@ make_summary annotated_files = do
   where
     count_annos m (_, Hits hs) = foldl' count1 m hs
     count_annos m _ = m
-    count1 m h = (M.insert h $! 1 + M.findWithDefault (0::Int) h m) m
+    count1 m h = (M.insert h $! 1 + M.lookupDefault (0::Int) h m) m
 
 write_file_pattern :: FilePath -> [( FilePath, [(L.ByteString,AnnoSet)] )] -> IO ()
 write_file_pattern pat = mapM_ go
@@ -79,8 +79,9 @@ readGeneTable report inp = do
     add_all ((gi, crm, strands, s, e):xs) n = do
         when (n `mod` 1024 == 0) (report' n '\r')
         val <- findSymbol gi
-        forM_ strands $ \str ->
-                io . addI (min s e) (max s e) (fromIntegral val) =<< findDiet (crm,str)
+        sequence_ $ withSenses strands $ \str ->
+                io . addI (min s e) (max s e) (fromIntegral val)
+                    =<< findDiet (str crm)
         add_all xs $! n+1
 
 
@@ -89,9 +90,10 @@ readChromTable = foldl' add M.empty . map L.words . L.lines
   where
     add m (x:_) | L.head x == '#' = m
     add m (ens:ucsc:ofs:_) =
-        let x = ucsc -- XXX L.fromChunks [shelve ucsc]
+        let k = L.fromChunks [ S.copy (L.toStrict  ens) ]
+            x = L.fromChunks [ S.copy (L.toStrict ucsc) ]
             y = ereadInt ofs
-        in x `seq` y `seq` M.insert (ens {-L.fromChunks [shelve ens]-}) (x,y) m
+        in x `seq` y `seq` M.insert k (x,y) m
     add _ (ens:_) = error $ "too few fields in translation of chromosome " ++ show (L.unpack ens)
     add m [     ] = m
 
@@ -99,7 +101,7 @@ readMySam :: [L.ByteString] -> [Region]
 readMySam = xlate . map (L.split '\t')
   where
     xlate ((qname : flag0 : rname : pos0 : _mapq : cigar : _) : rs)
-        | flag .&. 4 == 0 = ( qname, rname, [str], pos-1, pos+len-1 ) : xlate rs
+        | flag .&. 4 == 0 = ( qname, rname, str, pos-1, pos+len-1 ) : xlate rs
       where
         flag = ereadInt flag0
         pos = ereadInt pos0
@@ -148,7 +150,7 @@ readMyFasta = concatMap proc_line . filter (\s -> not (L.null s) && L.head s == 
             (crm, l1) = L.break (':'==) label
             (str, l2) = L.break (':'==) $ L.drop 1 l1
             (lft, l3) = fromMaybe (error "parse error in FASTA header") $ L.readInt $ L.drop 1 l2
-            (rht, _) = fromMaybe (error "parse error in FASTA header") $ L.readInt $ L.drop 1 l3
+            (rht,  _) = fromMaybe (error "parse error in FASTA header") $ L.readInt $ L.drop 1 l3
 
 
 readMyBed :: [L.ByteString] -> [Region]
@@ -167,12 +169,12 @@ read5cFile = foldr go [] . map L.words
         go (gi:crm:s:e:strand) = (:) (gi, crm, read_strand strand, ereadInt s, ereadInt e)
         go _ = error $ "too few fields in legacy annotation file"
 
-read_strand :: [L.ByteString] -> [Sense]
-read_strand [   ]                      = [Forward, Reverse]
-read_strand (s:_) | L.null s           = [Forward, Reverse]
-                  | L.head s == '-'    = [Reverse]
-                  | s == L.pack "0"    = [Reverse, Forward]
-                  | otherwise          = [Forward]
+read_strand :: [L.ByteString] -> Senses
+read_strand [   ]                      = Both
+read_strand (s:_) | L.null s           = Both
+                  | L.head s == '-'    = Reverse
+                  | s == L.pack "0"    = Both
+                  | otherwise          = Forward
 
 xlate_chrom :: Maybe ChromTable -> Region -> Region
 xlate_chrom Nothing reg = reg                                       -- no table, no translation

@@ -3,11 +3,10 @@ module Diet (
     MDiet, IDiet, Word, newDiet, addI, lookupI,
     lookupIs, lookupICovered, lookupIPartial,
     lookupLeft, lookupRight, unsafeFreezeDiet,
-    unions, intersections, setminus
+    unions
 ) where
 
 import Bio.Prelude       hiding ( pi, Word, loop )
-import Data.ByteString.Internal ( inlinePerformIO )
 import Foreign.C.Types          ( CULong(..), CInt(..) )
 import Foreign.ForeignPtr       ( newForeignPtr, withForeignPtr, ForeignPtr )
 import Foreign.Marshal.Alloc    ( malloc )
@@ -82,12 +81,12 @@ unsafeFreezeDiet (MDiet d) = return $! IDiet d
 -- crashed should result, but completely unpredictable results.
 pJudy1ToLazyAscList :: ForeignPtr a -> PJudy1 -> [Word]
 pJudy1ToLazyAscList  _ pj1 | pj1 == nullPtr = []
-pJudy1ToLazyAscList fp pj1 = judy1ToLazyAscList fp $ inlinePerformIO (peek pj1)
+pJudy1ToLazyAscList fp pj1 = judy1ToLazyAscList fp $ unsafeDupablePerformIO (peek pj1)
 
 judy1ToLazyAscList :: ForeignPtr a -> Judy1 -> [Word]
 judy1ToLazyAscList fp j1 = loop 0 judy1First
   where
-    loop i act = inlinePerformIO $
+    loop i act = unsafeDupablePerformIO $
         withForeignPtr fp $ \_ ->
         with i $ \pi -> do
         rc <- act j1 pi nullPtr
@@ -112,7 +111,7 @@ lookupIs :: Int -> Int -> IDiet -> [[Word]]
 lookupIs begin end _ | begin >= end = []
 lookupIs begin end (IDiet fpjl) = loop (fromIntegral begin)
   where
-    loop i = inlinePerformIO $
+    loop i = unsafeDupablePerformIO $
         withForeignPtr fpjl $ \pjl ->
         with i $ \pi -> do
         jl <- peek pjl
@@ -241,7 +240,7 @@ xs `setminus` [] = xs
 -- look at the start and to its left.  Returns the distance and the list
 -- of annotations.
 lookupLeft :: Int -> IDiet -> ( Int, [Word] )
-lookupLeft s (IDiet fpjl) = inlinePerformIO $
+lookupLeft s (IDiet fpjl) = unsafeDupablePerformIO $
     withForeignPtr fpjl $ \pjl ->
     with (fromIntegral s) $ \pi -> do
     jl <- peek pjl
@@ -260,7 +259,7 @@ lookupLeft s (IDiet fpjl) = inlinePerformIO $
 -- right of the interval.  The first contains intervals already open in
 -- the query, the second contains the interesting stuff.
 lookupRight :: Int -> IDiet -> ( Int, [Word] )
-lookupRight e (IDiet fpjl) = inlinePerformIO $
+lookupRight e (IDiet fpjl) = unsafeDupablePerformIO $
     withForeignPtr fpjl $ \pjl ->
     with (fromIntegral e) $ \pi -> do
     jl <- peek pjl

@@ -21,6 +21,10 @@ involving BAM files for Next Generation Sequencing data:
 * `bam-rmdup`: removes PCR duplicates from BAM files and computes a
   consensus sequence for each cluster of replicates.
 
+* `expound`: annotates regions, similar to what `bedtools` does.
+  `expound` has a neat client/server mode so it doesn't have to read the
+  same annotation file over and over again.
+
 * `fastq2bam`: converts FastQ to BAM.  It handles many weird
   combinations of one to four input files and optionally trims reads and
   merges read pairs.
@@ -35,10 +39,18 @@ from Hackage.  To install, follow these steps:
 * install GHC (see http://haskell.org/ghc) and Cabal (see
    http://haskell.org/cabal),
 * run `cabal update` (takes a while to download the current package list),
+* install Judy, either from http://judy.sourceforge.net, or through your
+  package manager (it's named `libjudy-dev` or similar),
 * run `cabal install
   https://bitbucket.org/ustenzel/biohazard/get/master.tar.gz
   https://bitbucket.org/ustenzel/biohazard-tools/get/master.tar.gz`
   (takes even longer).
+* If you don't have or don't like Judy, you can install without it by
+  running `cabal install -f -judy
+  https://bitbucket.org/ustenzel/biohazard/get/master.tar.gz
+  https://bitbucket.org/ustenzel/biohazard-tools/get/master.tar.gz`.
+  The performance of `expound` may suffer a bit.
+
 
 When done, on an unmodified Cabal setup, you will find the binaries in 
 `${HOME}/cabal/bin`.  Cabal can install them in a different place, please 
@@ -53,24 +65,16 @@ tells you how to wipe a package database without causing further destruction.
 Expound
 =======
 
-This is old code that annotates stuff in weird legacy formats (formerly
-called `coord2anno`).  It suffered bitrot and is arguably best replaced
-with `Bedtools`.
+This is a reimagination of old code.  We modernize the code, use a
+broadcast protocol to find the server, and thereby make C/S mode
+completely transparent, implicit and optional.  Once it runs, it's
+integrated into bam-mangle to make it more flexible.  But for now, the
+code is barely kept alive.
 
-The only reason this could ever be useful is because it has a
-client-server mode, which is handy if many small files need to be
-processed and reading the annotation file becomes the bottleneck.
-(Annotation files are frequently big and rather expensive to parse.)
+To do:
 
-A reimagination would modernize the code, use a broadcast protocol to
-find the server, and make C/S mode completely transparent, implicit and
-optional.  The lookup could even be integrated into bam-mangle to make
-it more flexible.  But for now, the code is barely kept alive.
-
-* make `expound` compile again
- * short byte strings as keys in maps
- * hashmaps?
- * support Bam again
-* edit `expound.1` to reflect renaming, redesign, whatever
+* support Bam again
 * do something about the silly translation tables
-* make Judy optional, when in doubt by not compiling `expound`
+* see if C/S still works at all
+* add the broadcast discovery
+* integrate with `bam-mangle`

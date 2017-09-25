@@ -1,6 +1,6 @@
 module Symtab where
 
-import qualified Data.Map                           as M
+import qualified Data.HashMap.Strict                as M
 import qualified Data.ByteString.Lazy.Char8         as L
 import qualified Data.ByteString.Char8              as S
 import qualified Data.Vector                        as V
@@ -8,22 +8,31 @@ import qualified Data.Vector                        as V
 import Bio.Prelude
 import Diet
 
-data Sense      = Forward | Reverse     deriving (Show, Eq, Ord)
 type Gene       = S.ByteString
 type Chrom      = L.ByteString
-type ChromTable = M.Map L.ByteString (Chrom, Int)
+type ChromTable = M.HashMap L.ByteString (Chrom, Int)
 type Start      = Int
 type End        = Int
-type Region     = ( L.ByteString, Chrom, [Sense], Start, End )
+type Region     = ( L.ByteString, Chrom, Senses, Start, End )
 
-type MAnnotab   = M.Map (Chrom, Sense) MDiet
-type IAnnotab   = M.Map (Chrom, Sense) IDiet
-type Symtab     = M.Map Gene Int
+data Senses = None | Forward | Reverse | Both deriving ( Show, Enum )
+
+withSenses :: Senses -> ((a -> Either a a) -> b) -> [b]
+withSenses None    _ = []
+withSenses Forward k = [k Right]
+withSenses Reverse k = [k Left]
+withSenses Both    k = [k Left, k Right]
+
+-- We use `Right` for forward, and `Left` for reverse,
+-- just like when driving on roads.
+type MAnnotab   = M.HashMap (Either Chrom Chrom) MDiet
+type IAnnotab   = M.HashMap (Either Chrom Chrom) IDiet
+type Symtab     = M.HashMap Gene Int
 type RevSymtab  = V.Vector Gene
 
 findSymbol :: L.ByteString -> CPS r Int
 findSymbol s = do
-    let !k = L.toStrict s -- XXX shelve s
+    let !k = S.copy $ L.toStrict s
     t <- get_syms
     case M.lookup k t of
         Just x  -> return x
@@ -31,7 +40,7 @@ findSymbol s = do
                       modify_syms $ M.insert k l
                       return l
 
-findDiet :: (L.ByteString, Sense) -> CPS r MDiet
+findDiet :: Either Chrom Chrom -> CPS r MDiet
 findDiet k = do
     m <- get_anno
     case M.lookup k m of
@@ -45,7 +54,7 @@ invertTab :: Symtab -> RevSymtab
 invertTab t = V.replicate (M.size t) "" V.// [ (y,x) | (x,y ) <- M.toList t ]
 
 eraseStrand :: Region -> Region
-eraseStrand ( n, c, _, s, e ) = ( n, c, [Forward, Reverse], s, e )
+eraseStrand ( n, c, _, s, e ) = ( n, c, Both, s, e )
 
 -- CPS ~~ MonadState (Symtab, Annotab)
 -- CPS state monad.  Was once necessary to deal with the 'withDiet' calls.

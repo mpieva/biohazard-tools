@@ -34,7 +34,7 @@ import qualified Data.Binary.Get                    as B
 import qualified Data.Binary.Put                    as B
 import qualified Data.ByteString.Lazy.Char8         as L
 import qualified Data.ByteString.Char8              as S
-import qualified Data.Map                           as M
+import qualified Data.HashMap.Strict                as M
 import qualified Network.Socket.ByteString          as N ( recv )
 import qualified Network.Socket.ByteString.Lazy     as N ( sendAll )
 
@@ -204,7 +204,8 @@ run_standalone opts files = execCPS $ do
                 when ((1+num) `mod` 16384 == 0) . optProgress opts .
                     shows filename . (++) " (" . shows num . (++) "): " .
                     (++) (L.unpack name) $ "\27[K\r"
-                return (name, which syms s e [ M.findWithDefault emptyD (c,str) anno | str <- strs ])
+                return (name, which syms s e
+                    (withSenses strs $ \str -> M.lookupDefault emptyD (str c) anno))
 
         annotate which f s = (,) f <$> zipWithLM (annotate1 f which) [0::Int ..]
                                                  (map (optXForm opts) $ readInput s)
@@ -283,7 +284,7 @@ run_client h p opts files = do
 
 type HalfTable = ( S.ByteString, MAnnotab, Symtab )
 type FullTable = ( IAnnotab, Symtab, RevSymtab )
-type FullTables = M.Map S.ByteString FullTable
+type FullTables = M.HashMap S.ByteString FullTable
 
 run_server :: ServiceName -> Options -> IO ()
 run_server svname opts = do
@@ -317,7 +318,7 @@ serverfn pr fulltables (Nothing, fts) (StartAnno name) = do
 serverfn _ _ (Nothing,_) (AddAnno _) = fail "client tried growing an annotation set without opening it"
 serverfn _ _ (Just (name, annotab, symtab), st) (AddAnno (gi, chrom, strs, s, e)) =
     runCPS (findSymbol gi >>= \val ->
-            forM_ strs $ \str -> findDiet (chrom,str) >>=
+            sequence_ $ withSenses strs $ \str -> findDiet (str chrom) >>=
                                  io . addI (min s e) (max s e) (fromIntegral val))
            (\_ symtab' annotab' -> return ((Just (name, annotab', symtab'), st), Nothing))
            symtab annotab
@@ -334,7 +335,7 @@ serverfn pr fulltables (Just (name, annotab, symtab), s) EndAnno = do
 serverfn _ _ st@(_,annosets) (Anno which (name,c,strs,s,e)) = do
     emptyD <- unsafeFreezeDiet =<< newDiet
     let result = Result name . foldr combine_anno_sets (Hits []) $
-           [ interpretWhich which syms s e [ M.findWithDefault emptyD (c,str) anno | str <- strs ]
+           [ interpretWhich which syms s e (withSenses strs $ \str -> M.lookupDefault emptyD (str c) anno)
            | (anno, _, syms) <- annosets ]
     return (st, Just result)
 
