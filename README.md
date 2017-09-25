@@ -66,3 +66,11 @@ A reimagination would modernize the code, use a broadcast protocol to
 find the server, and make C/S mode completely transparent, implicit and
 optional.  The lookup could even be integrated into bam-mangle to make
 it more flexible.  But for now, the code is barely kept alive.
+
+* make `expound` compile again
+ * short byte strings as keys in maps
+ * hashmaps?
+ * support Bam again
+* edit `expound.1` to reflect renaming, redesign, whatever
+* do something about the silly translation tables
+* make Judy optional, when in doubt by not compiling `expound`

@@ -157,19 +157,21 @@ Executable expound
   Ghc-options:         -Wall -rtsopts
   Default-Language:    Haskell2010
   Default-Extensions:  NoImplicitPrelude, OverloadedStrings, BangPatterns
+  Other-Extensions:    ForeignFunctionInterface, EmptyDataDecls
   C-sources:           src/diet.c
   Hs-Source-Dirs:      src
-  Other-modules:       Diet, FormattedIO, Network, Hg18, Symtab
+  Other-modules:       Diet, FormattedIO, Network, Symtab,
+                       Paths_biohazard_tools
   Extra-libraries:     Judy
-  Build-depends:       array,
-                       base                     >= 4.6 && < 4.11,
-                       binary,
+  Build-depends:       base                     >= 4.6 && < 4.11,
+                       binary                   >= 0.8.3 && < 0.9,
                        biohazard                >= 0.6.15 && < 0.7,
-                       bytestring               >= 0.10.2 && < 0.11
-                       containers,
-                       directory,
-                       filepath,
-                       network                  >= 2.6 && < 3.0
+                       bytestring               >= 0.10.2 && < 0.11,
+                       containers               >= 0.4.1 && < 0.6,
+                       directory                >= 1.2 && < 1.4,
+                       filepath                 >= 1.3 && < 1.5,
+                       network                  >= 2.3 && < 3.0,
+                       vector                   >= 0.11 && < 0.13
 
 
 Executable fastq2bam

@@ -1,4 +1,4 @@
-{-# LANGUAGE ForeignFunctionInterface,EmptyDataDecls #-}
+{-# LANGUAGE ForeignFunctionInterface, EmptyDataDecls #-}
 module Diet (
     MDiet, IDiet, Word, newDiet, addI, lookupI,
     lookupIs, lookupICovered, lookupIPartial,
@@ -6,15 +6,14 @@ module Diet (
     unions, intersections, setminus
 ) where
 
-import Control.Monad            ( when )
+import Bio.Prelude       hiding ( pi, Word, loop )
 import Data.ByteString.Internal ( inlinePerformIO )
-import Foreign.C.Types          ( CULong, CInt )
+import Foreign.C.Types          ( CULong(..), CInt(..) )
 import Foreign.ForeignPtr       ( newForeignPtr, withForeignPtr, ForeignPtr )
 import Foreign.Marshal.Alloc    ( malloc )
 import Foreign.Marshal.Utils    ( with )
 import Foreign.Ptr              ( Ptr, FunPtr, nullPtr )
 import Foreign.Storable         ( peek, poke )
-import Prelude           hiding ( pi )
 
 -- | "Discrete Interval Encoding Tree:"
 -- Stores a mapping from Int to a set of Ints.  Consecutive intervals
@@ -161,9 +160,8 @@ addI begin end val (MDiet fpjl) | begin == end = return ()
          let loop = do pj1 <- judyLNext jl pi nullPtr
                        when (pj1 /= nullPtr) $ do
                             i <- peek pi
-                            when (i <= fromIntegral end) $ do
-                                judy1Set pj1 val nullPtr
-                                loop
+                            when (i <= fromIntegral end) $
+                                judy1Set pj1 val nullPtr >> loop
          in loop
 
   where
@@ -198,7 +196,7 @@ judy1Copy j1 pj2 =
                       if rc == 0
                           then return ()
                           else do i <- peek pi
-                                  judy1Set pj2 i nullPtr
+                                  _ <- judy1Set pj2 i nullPtr
                                   loop judy1Next
     loop judy1First
 

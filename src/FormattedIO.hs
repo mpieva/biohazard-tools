@@ -1,16 +1,13 @@
 module FormattedIO where
 
+import Bio.Prelude
+import System.FilePath
+import System.IO
+
 import qualified Data.ByteString.Char8              as S
 import qualified Data.ByteString.Lazy.Char8         as L
 import qualified Data.Map                           as M
-import Control.Monad
-import System.FilePath
-import System.IO
-import Bio.File.Bam
-import Data.Bits
-import Data.Char ( isSpace )
-import Data.List ( foldl' )
-import Data.Maybe ( isJust, fromMaybe )
+
 import Diet
 import Symtab
 
@@ -45,14 +42,14 @@ make_summary annotated_files = do
 
     sequence_ [ do S.putStr anno
                    sequence_ [ do let v = M.findWithDefault 0 anno counts
-                                  putChar '\t' ; putStr (show v) 
+                                  putChar '\t' ; putStr (show v)
                              | counts <- mm ]
                    putChar '\n'
               | ( anno, () ) <- M.toList keymap ]
   where
     count_annos m (_, Hits hs) = foldl' count1 m hs
     count_annos m _ = m
-    count1 m h = (M.insert h $! 1 + M.findWithDefault (0::Int) h m) m 
+    count1 m h = (M.insert h $! 1 + M.findWithDefault (0::Int) h m) m
 
 write_file_pattern :: FilePath -> [( FilePath, [(L.ByteString,AnnoSet)] )] -> IO ()
 write_file_pattern pat = mapM_ go
@@ -79,22 +76,22 @@ readGeneTable report inp = do
     report' n c = io . report $ "reading annotations: " ++ shows n "\27[K" ++ [c]
 
     add_all [] n = report' n '\n'
-    add_all ((gi, chr, strands, s, e):xs) n = do
+    add_all ((gi, crm, strands, s, e):xs) n = do
         when (n `mod` 1024 == 0) (report' n '\r')
         val <- findSymbol gi
         forM_ strands $ \str ->
-                io . addI (min s e) (max s e) (fromIntegral val) =<< findDiet (chr,str)
+                io . addI (min s e) (max s e) (fromIntegral val) =<< findDiet (crm,str)
         add_all xs $! n+1
-    
+
 
 readChromTable :: L.ByteString -> ChromTable
 readChromTable = foldl' add M.empty . map L.words . L.lines
   where
     add m (x:_) | L.head x == '#' = m
-    add m (ens:ucsc:ofs:_) = 
-        let x = L.fromChunks [shelve ucsc]
+    add m (ens:ucsc:ofs:_) =
+        let x = ucsc -- XXX L.fromChunks [shelve ucsc]
             y = ereadInt ofs
-        in x `seq` y `seq` M.insert (L.fromChunks [shelve ens]) (x,y) m
+        in x `seq` y `seq` M.insert (ens {-L.fromChunks [shelve ens]-}) (x,y) m
     add _ (ens:_) = error $ "too few fields in translation of chromosome " ++ show (L.unpack ens)
     add m [     ] = m
 
@@ -118,8 +115,11 @@ textual_cigar_to_len s0 = go s0 0
     go s acc | L.null s = return acc
     go s acc = do (n,s') <- L.readInt s
                   (op,t) <- L.uncons s'
-                  go t $! acc + if op `elem` "MDN" then n else 0
-                       
+                  go t $! acc + w n op
+
+    w n 'M' = n ; w n 'D' = n ; w n 'N' = n ; w _ _ = 0
+
+{-
 readMyBam :: L.ByteString -> [Region]
 readMyBam s = map xlate $ filter (\r -> b_flag r .&. 4 == 0) recs
   where
@@ -127,10 +127,11 @@ readMyBam s = map xlate $ filter (\r -> b_flag r .&. 4 == 0) recs
     getref r = L.fromChunks [fst $ refs ! r]
     xlate r = (b_qname r, getref (b_rname r), [str], b_pos r, b_pos r + cigarToAlnLen (b_cigar r))
        where str = if b_flag r .&. 0x10 == 0 then Forward else Reverse
+-}
 
 readInput :: L.ByteString -> [Region]
 readInput s = case dropWhile (L.all isSpace) (L.lines s) of
-    _        | isBam s                       -> readMyBam s
+    -- _        | isBam s                       -> readMyBam s
     ls@(l:_) | L.head l == '>'               -> readMyFasta ls
              | may_well_be_sam l             -> readMySam ls
     ls                                       -> readMyBed ls
@@ -142,28 +143,28 @@ readMyFasta :: [L.ByteString] -> [Region]
 readMyFasta = concatMap proc_line . filter (\s -> not (L.null s) && L.head s == '>')
   where
     proc_line = map parse_label . L.split ';' . L.tail
-    parse_label label = (label, chr, read_strand [str], lft, rht)
+    parse_label label = (label, crm, read_strand [str], lft, rht)
         where
-            (chr, l1) = L.break (':'==) label
+            (crm, l1) = L.break (':'==) label
             (str, l2) = L.break (':'==) $ L.drop 1 l1
             (lft, l3) = fromMaybe (error "parse error in FASTA header") $ L.readInt $ L.drop 1 l2
             (rht, _) = fromMaybe (error "parse error in FASTA header") $ L.readInt $ L.drop 1 l3
-    
+
 
 readMyBed :: [L.ByteString] -> [Region]
 readMyBed = foldr go [] . map (L.split '\t')
   where go [] = id
         go (w:_) | w == L.pack "track" || L.head w == '#' = id
-        go (chr:s:e:gi:strand) = (:) (gi, chr, read_strand (drop 1 strand), ereadInt s, ereadInt e)
-        go ws = error $ "not enough fields in BED file" ++ case ws of 
+        go (crm:s:e:gi:strand) = (:) (gi, crm, read_strand (drop 1 strand), ereadInt s, ereadInt e)
+        go ws = error $ "not enough fields in BED file" ++ case ws of
                     [w] | length (L.words w) >= 4 -> " (whitespace instead of tabs?)"
                     _                             -> ""
 
 read5cFile :: [L.ByteString] -> [Region]
-read5cFile = foldr go [] . map L.words 
+read5cFile = foldr go [] . map L.words
   where go [] = id
         go (w:_) | L.head w == '#' = id
-        go (gi:chr:s:e:strand) = (:) (gi, chr, read_strand strand, ereadInt s, ereadInt e)
+        go (gi:crm:s:e:strand) = (:) (gi, crm, read_strand strand, ereadInt s, ereadInt e)
         go _ = error $ "too few fields in legacy annotation file"
 
 read_strand :: [L.ByteString] -> [Sense]
@@ -175,13 +176,13 @@ read_strand (s:_) | L.null s           = [Forward, Reverse]
 
 xlate_chrom :: Maybe ChromTable -> Region -> Region
 xlate_chrom Nothing reg = reg                                       -- no table, no translation
-xlate_chrom (Just ct) (n, chr, ss, s, e) = case M.lookup chr ct of
+xlate_chrom (Just ct) (n, crm, ss, s, e) = case M.lookup crm ct of
         Just (c,o) -> (n, c, ss, s+o-1, e+o)                        -- hit, so translate
-        Nothing -> error $ "chromosome unknown: " ++ L.unpack chr   -- translate failed
-  
+        Nothing -> error $ "chromosome unknown: " ++ L.unpack crm   -- translate failed
+
 
 ereadInt :: L.ByteString -> Int
-ereadInt s = case L.readInt s of Just (x,_) -> x 
+ereadInt s = case L.readInt s of Just (x,_) -> x
                                  Nothing -> error $ "couldn't parse Int at " ++ L.unpack s
 
 

@@ -1,18 +1,15 @@
 module Network where
 
+import Bio.Prelude hiding ( loop )
+import Network.Socket
+
+import qualified Data.Binary.Get                    as B
 import qualified Data.Binary.Put                    as B
-import qualified Data.Binary.Strict.IncrementalGet  as B
 import qualified Data.ByteString.Char8              as S
 import qualified Data.ByteString.Lazy.Char8         as L
 import qualified Network.Socket.ByteString          as N ( recv )
 import qualified Network.Socket.ByteString.Lazy     as N ( sendAll )
 
-import Control.Applicative
-import Control.Monad ( replicateM )
-import Data.Bits
-import Network.Socket
-
-import Bio.Base
 import FormattedIO
 import Symtab
 
@@ -30,26 +27,26 @@ putWord i | i < 0x80  = do B.putWord8 (fromIntegral i)
           | otherwise = do B.putWord8 $ (fromIntegral i .&. 0x7f) .|. 0x80
                            putWord $ i `shiftR` 7
 
-getWord :: ( Bits a, Integral a ) => B.Get r a
+getWord :: ( Bits a, Integral a ) => B.Get a
 getWord = do
     w <- B.getWord8
     if w < 0x80 then return (fromIntegral w)
                 else do w' <- getWord
                         return $ (w' `shiftL` 7) .|. (fromIntegral w .&. 0x7f)
 
-getRequest :: B.Get r Request
+getRequest :: B.Get Request
 getRequest = do key <- getWord
-                case key of 
+                case key of
                     0 -> StartAnno <$> getString
                     1 -> AddAnno <$> ( (,,,,) <$> getLazyString
-                                              <*> getLazyString 
-                                              <*> (toSense <$> getWord) 
+                                              <*> getLazyString
+                                              <*> (toSense <$> getWord)
                                               <*> getWord
                                               <*> getWord )
                     2 -> return EndAnno
                     _ -> pack (toEnum (key - 3)) <$> getLazyString
-                                                 <*> getLazyString 
-                                                 <*> (toSense <$> getWord) 
+                                                 <*> getLazyString
+                                                 <*> (toSense <$> getWord)
                                                  <*> getWord
                                                  <*> getWord
   where
@@ -63,7 +60,7 @@ getRequest = do key <- getWord
 
 
 putRequest :: Request -> B.Put
-putRequest (StartAnno name)      = do putWord (0::Int) 
+putRequest (StartAnno name)      = do putWord (0::Int)
                                       putString name
 putRequest (AddAnno (n,m,s,u,v)) = do putWord (1::Int)
                                       putLazyString n
@@ -86,7 +83,7 @@ fromSense [Reverse] = 2
 fromSense _         = 3
 
 
-getResponse :: B.Get r Response
+getResponse :: B.Get Response
 getResponse = do key <- getWord
                  case key :: Int of
                     0 -> return UnknownAnno
@@ -111,10 +108,10 @@ putResponse (Result n as) = do putWord (2::Int)
                                           Hits hs      -> do putWord (length hs + 2) ; mapM_ putString hs
 
 
-getString :: B.Get r S.ByteString
+getString :: B.Get S.ByteString
 getString = getWord >>= B.getByteString
 
-getLazyString :: B.Get r L.ByteString
+getLazyString :: B.Get L.ByteString
 getLazyString = L.fromChunks . (:[]) <$> getString
 
 putString :: S.ByteString -> B.Put
@@ -125,15 +122,16 @@ putLazyString s = do putWord $ L.length s ; B.putLazyByteString s
 
 
 
-service :: B.Get a a -> (b -> B.Put) -> (s -> a -> IO (s, Maybe b)) -> Socket -> s -> IO s
-service g p f sk = loop (B.runGet g S.empty)
+service :: B.Get a -> (b -> B.Put) -> (s -> a -> IO (s, Maybe b)) -> Socket -> s -> IO s
+service g p f sk = loop (B.runGetIncremental g)
   where
-    loop (B.Finished rest a) s = do (s',b) <- f s a
-                                    maybe (return ()) (N.sendAll sk . B.runPut . p) b
-                                    loop (B.runGet g rest) s'
-    loop (B.Failed m) _ = do sClose sk 
-                             fail m
-    loop (B.Partial k) s = do inp <- N.recv sk 4000
-                              if S.null inp then sClose sk >> return s else loop (k inp) s
-
+    loop (B.Done rest _ a) s = do (s',b) <- f s a
+                                  maybe (return ()) (N.sendAll sk . B.runPut . p) b
+                                  loop (B.runGetIncremental g `B.pushChunk` rest) s'
+    loop (B.Fail    _ _ m) _ = do close sk
+                                  fail m
+    loop (B.Partial     k) s = do inp <- N.recv sk 4000
+                                  if S.null inp
+                                      then s <$ close sk
+                                      else loop (k $ Just inp) s
 

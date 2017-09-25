@@ -3,11 +3,12 @@ module Symtab where
 import qualified Data.Map                           as M
 import qualified Data.ByteString.Lazy.Char8         as L
 import qualified Data.ByteString.Char8              as S
+import qualified Data.Vector                        as V
 
-import Bio.Base
-import Data.Array
+import Bio.Prelude
 import Diet
 
+data Sense      = Forward | Reverse     deriving (Show, Eq, Ord)
 type Gene       = S.ByteString
 type Chrom      = L.ByteString
 type ChromTable = M.Map L.ByteString (Chrom, Int)
@@ -18,13 +19,13 @@ type Region     = ( L.ByteString, Chrom, [Sense], Start, End )
 type MAnnotab   = M.Map (Chrom, Sense) MDiet
 type IAnnotab   = M.Map (Chrom, Sense) IDiet
 type Symtab     = M.Map Gene Int
-type RevSymtab  = Array Int Gene
+type RevSymtab  = V.Vector Gene
 
 findSymbol :: L.ByteString -> CPS r Int
 findSymbol s = do
-    let !k = shelve s
+    let !k = L.toStrict s -- XXX shelve s
     t <- get_syms
-    case M.lookup k t of 
+    case M.lookup k t of
         Just x  -> return x
         Nothing -> do let !l = M.size t
                       modify_syms $ M.insert k l
@@ -33,15 +34,15 @@ findSymbol s = do
 findDiet :: (L.ByteString, Sense) -> CPS r MDiet
 findDiet k = do
     m <- get_anno
-    case M.lookup k m of 
+    case M.lookup k m of
         Just d  -> return d
         Nothing -> do d <- io newDiet
                       modify_anno $ M.insert k d
-                      return d 
+                      return d
 
 
 invertTab :: Symtab -> RevSymtab
-invertTab t = array (0, M.size t -1) [ (y,x) | (x,y ) <- M.toList t ]
+invertTab t = V.replicate (M.size t) "" V.// [ (y,x) | (x,y ) <- M.toList t ]
 
 eraseStrand :: Region -> Region
 eraseStrand ( n, c, _, s, e ) = ( n, c, [Forward, Reverse], s, e )
@@ -52,6 +53,10 @@ newtype CPS r a = CPS { runCPS :: (a -> Symtab -> MAnnotab -> IO r) -> Symtab ->
 
 instance Functor (CPS r) where
     fmap f m = CPS $ \k -> runCPS m (k . f)
+
+instance Applicative (CPS r) where
+    pure a = CPS $ \k -> k a
+    a <*> b = CPS $ \k -> runCPS a (\f -> runCPS b (k . f))
 
 instance Monad (CPS r) where
     return a = CPS $ \k -> k a

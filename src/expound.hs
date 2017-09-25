@@ -21,36 +21,27 @@
  - occasional off-by-one error is easily possible.
  -}
 
+import Bio.Prelude           hiding ( Word, loop )
+import Data.Vector                  ( (!) )
+import Network.Socket        hiding ( send )
+import Paths_biohazard_tools        ( getDataFileName )
+import System.Console.GetOpt
+import System.Directory             ( doesFileExist )
+import System.IO                    ( withFile, IOMode(..) )
+import System.IO.Unsafe             ( unsafeInterleaveIO )
+
+import qualified Data.Binary.Get                    as B
 import qualified Data.Binary.Put                    as B
-import qualified Data.Binary.Strict.IncrementalGet  as B
 import qualified Data.ByteString.Lazy.Char8         as L
 import qualified Data.ByteString.Char8              as S
 import qualified Data.Map                           as M
 import qualified Network.Socket.ByteString          as N ( recv )
 import qualified Network.Socket.ByteString.Lazy     as N ( sendAll )
 
-import Control.Applicative          ( (<$>) )
-import Control.Concurrent           ( forkIO )
-import Control.Concurrent.MVar
-import Control.Monad         hiding ( mapM, forM )
-import Data.Array
-import Data.Traversable             ( forM, sequenceA )
-import Data.List                    ( sort, intercalate )
-import Network.Socket        hiding ( send )
-import Paths_coord2anno             ( getDataFileName )
-import System.Console.GetOpt
-import System.Directory             ( doesFileExist )
-import System.Environment           ( getArgs )
-import System.Exit                  ( exitSuccess, exitFailure )
-import System.IO
-import System.IO.Unsafe             ( unsafeInterleaveIO )
-
 import Diet
 import FormattedIO
 import Network
 import Symtab
-
-import Hg18
 
 data Options = Options
      { optOutput      :: [( FilePath, [Annotation] )] -> IO ()
@@ -102,13 +93,6 @@ options =
                                opts { optChromTable = Just (readChromTable s) }) )
                  "FILE")
          "read chr translation table from FILE"
-     , Option ['C']     ["chroms-internal"]
-         (ReqArg ((\ n opts -> case M.lookup n chromTables of
-                                    Nothing -> error $ "unknown chromosome table " ++ n
-                                                    ++ "; use one of [" ++ intercalate ", " (M.keys chromTables) ++ "]"
-                                    Just t -> return $ opts { optChromTable = Just t }) )
-                 "NAME")
-         "use builtin translation table NAME"
      , Option ['s']     ["nostrand"]
          (NoArg (\ opts -> return $ opts { optXForm = eraseStrand }))
          "ignore strand information in region files"
@@ -167,8 +151,8 @@ standardLookup which syms s e diets =
 lookupNearest :: LookupFn
 lookupNearest syms s e diets =
     let overlaps = unions $ map (lookupI s e) diets
-        close    = sort $ filter (not . null . snd) $ map (lookupLeft s) diets ++ map (lookupRight e) diets
-    in case (overlaps, close) of
+        closeby  = sort $ filter (not . null . snd) $ map (lookupLeft s) diets ++ map (lookupRight e) diets
+    in case (overlaps, closeby) of
         ([], [    ]) -> Hits []
         ([], (as:_)) -> NearMiss (syms ! fromIntegral a) d where (d,(a:_)) = as
         (is,      _) -> Hits . map (syms!) $ map fromIntegral is
@@ -243,7 +227,7 @@ run_client h p opts files = do
                                sock S.empty
 
     optOutput opts =<< myReadFilesWith (annotate sock incoming) files
-    sClose sock
+    close sock
 
   where
     sendGeneTable fp regions = do
@@ -271,28 +255,30 @@ run_client h p opts files = do
                          _ <- takeMVar done
                          putMVar done True
 
-        let loop i (B.Finished rest (Result name annoset)) = do ff <- takeMVar in_flight
-                                                                putMVar in_flight $! ff-1
-                                                                f <- if ff == 1 && S.null rest
-                                                                       then readMVar done
-                                                                       else return False
-                                                                rs <- if f then return []
-                                                                           else unsafeInterleaveIO $ loop (1+i)
-                                                                                    (B.runGet getResponse rest)
-                                                                when ((1+i) `mod` 16384 == 0) . optProgress opts .
-                                                                    shows fp . (++) " (" . shows i . (++) "): " .
-                                                                    (++) (L.unpack name) $ "\27[K\r"
-                                                                return ((name,annoset):rs)
-            loop _ (B.Finished _ _) = do sClose sock
-                                         fail "unexpected answer from server"
-            loop _ (B.Failed m) = do sClose sock
-                                     fail m
-            loop i (B.Partial k) = do inp <- N.recv sock 4000
-                                      if S.null inp then sClose sock >>
-                                                         fail "connection closed unexpectedly"
-                                                    else loop i (k inp)
+        let loop i (B.Done   rest _ (Result name annoset)) = do
+                    ff <- takeMVar in_flight
+                    putMVar in_flight $! ff-1
+                    f <- if ff == 1 && S.null rest
+                           then readMVar done
+                           else return False
+                    rs <- if f then return []
+                               else unsafeInterleaveIO $ loop (1+i)
+                                        (B.runGetIncremental getResponse `B.pushChunk` rest)
+                    when ((1+i) `mod` 16384 == 0) . optProgress opts .
+                        shows fp . (++) " (" . shows i . (++) "): " .
+                        (++) (L.unpack name) $ "\27[K\r"
+                    return ((name,annoset):rs)
 
-        (,) fp <$> loop (0::Int) (B.runGet getResponse incoming)
+            loop _ (B.Done _ _ _) = do close sock
+                                       fail "unexpected answer from server"
+            loop _ (B.Fail _ _ m) = do close sock
+                                       fail m
+            loop i (B.Partial  k) = do inp <- N.recv sock 4000
+                                       if S.null inp then close sock >>
+                                                          fail "connection closed unexpectedly"
+                                                     else loop i (k $ Just inp)
+
+        (,) fp <$> loop (0::Int) (B.runGetIncremental getResponse `B.pushChunk` incoming)
 
 
 type HalfTable = ( S.ByteString, MAnnotab, Symtab )
@@ -304,7 +290,7 @@ run_server svname opts = do
     full_tables <- newMVar M.empty
     listener <- socket AF_INET Stream defaultProtocol
     port <- fromIntegral <$> (readIO svname :: IO Int)
-    bindSocket listener $ SockAddrInet port iNADDR_ANY
+    bind listener $ SockAddrInet port iNADDR_ANY
     listen listener 1
     optProgress opts $ "waiting for connections on port " ++ shows port "\27[K\n"
     let loop = do (sk, addr) <- accept listener
@@ -329,9 +315,9 @@ serverfn pr fulltables (Nothing, fts) (StartAnno name) = do
                       return ( (Just (name, M.empty, M.empty), fts), Just UnknownAnno )
 
 serverfn _ _ (Nothing,_) (AddAnno _) = fail "client tried growing an annotation set without opening it"
-serverfn _ _ (Just (name, annotab, symtab), st) (AddAnno (gi, chr, strs, s, e)) =
+serverfn _ _ (Just (name, annotab, symtab), st) (AddAnno (gi, chrom, strs, s, e)) =
     runCPS (findSymbol gi >>= \val ->
-            forM_ strs $ \str -> findDiet (chr,str) >>=
+            forM_ strs $ \str -> findDiet (chrom,str) >>=
                                  io . addI (min s e) (max s e) (fromIntegral val))
            (\_ symtab' annotab' -> return ((Just (name, annotab', symtab'), st), Nothing))
            symtab annotab
@@ -363,21 +349,29 @@ combine_anno_sets (NearMiss a d) (NearMiss b d')
     | otherwise       = NearMiss b d'
 
 
-newtype Client a = Client { runClient :: Socket -> S.ByteString -> IO (a, S.ByteString) }
-
-
-receive :: B.Get a a -> Client a
-receive getter = Client $ \sock incoming -> loop sock (B.runGet getter incoming)
+receive :: B.Get a -> Client a
+receive getter = Client $ \sock incoming -> loop sock (B.runGetIncremental getter `B.pushChunk` incoming)
   where
-    loop _sock (B.Failed m) = fail m
-    loop _sock (B.Finished rest a) = return (a,rest)
-    loop  sock (B.Partial k) = do inp <- N.recv sock 4000
-                                  if S.null inp then sClose sock >> fail "connection closed unexpectedly"
-                                                else loop sock $ k inp
+    loop _sock (B.Fail    _ _ m) = fail m
+    loop _sock (B.Done rest _ a) = return (a,rest)
+    loop  sock (B.Partial     k) = do inp <- N.recv sock 4000
+                                      if S.null inp then close sock >> fail "connection closed unexpectedly"
+                                                    else loop sock $ k $ Just inp
 
 send :: B.Put -> Client ()
 send putter = Client $ \sock incoming -> do N.sendAll sock $ B.runPut putter ; return ((), incoming)
 
+
+newtype Client a = Client { runClient :: Socket -> S.ByteString -> IO (a, S.ByteString) }
+
+instance Functor Client where
+    fmap f c = Client $ \s t -> runClient c s t >>= \(a, t') -> return (f a, t')
+
+instance Applicative Client where
+    pure a = Client $ \_ incoming -> return (a, incoming)
+    a <*> b = Client $ \s t -> runClient a s t >>= \(f, t') ->
+                               runClient b s t' >>= \(x, t'') ->
+                               return (f x, t'')
 instance Monad Client where
     return a = Client $ \_ incoming -> return (a, incoming)
     m >>= k = Client $ \sock incoming -> runClient m sock incoming >>= \(a, incoming') ->
@@ -386,7 +380,4 @@ instance Monad Client where
 lift :: IO a -> Client a
 lift k = Client $ \_ incoming -> k >>= \a -> return (a,incoming)
 
-
-chromTables :: M.Map String ChromTable
-chromTables = M.fromList [ ("hg18", chrom_table_hg18) ]
 
