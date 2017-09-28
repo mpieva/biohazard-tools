@@ -89,5 +89,5 @@ modify_anno f = CPS $ \k s t -> k () s $! f t
 liftCont :: ((a -> IO r) -> IO r) -> CPS r a
 liftCont f = CPS $ \k s t -> f (\a -> k a s t)
 
-execCPS :: CPS () a -> IO ()
-execCPS m = runCPS m (\_ _ _ -> return ()) M.empty M.empty
+execCPS :: CPS a a -> IO a
+execCPS m = runCPS m (\a _ _ -> return a) M.empty M.empty
