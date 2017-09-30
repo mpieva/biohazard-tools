@@ -1,4 +1,3 @@
-{-# LANGUAGE LambdaCase #-}
 module FormattedIO where
 
 import Bio.Bam                   hiding ( Region(..) )
@@ -10,14 +9,13 @@ import System.IO
 
 import qualified Data.ByteString                    as B
 import qualified Data.ByteString.Char8              as S
-import qualified Data.ByteString.Lazy.Char8         as L
 import qualified Data.HashMap.Strict                as M
 
 import Diet ( addI )
 import Symtab
 
 data AnnoSet = Hits [Bytes] | NearMiss Bytes Int deriving Show
-type Annotation = ( L.ByteString, AnnoSet )
+type Annotation = ( Bytes, AnnoSet )
 
 print_header :: Handle -> IO ()
 print_header hdl = hPutStr hdl "#RegionName\tID\n"
@@ -26,11 +24,11 @@ make_table :: Handle -> Iteratee [Annotation] IO ()
 make_table hdl = mapStreamM_ format
   where
     format (_, Hits []) = return ()
-    format (n, Hits hs) = do L.hPut hdl n ; hPutChar hdl '\t'
+    format (n, Hits hs) = do S.hPut hdl n ; hPutChar hdl '\t'
                              S.hPut hdl (head hs)
                              forM_ (tail hs) $ \h -> hPutChar hdl ':' >> S.hPut hdl h
                              hPutChar hdl '\n'
-    format (n, NearMiss a d) = do L.hPut hdl n ; hPutChar hdl '\t'
+    format (n, NearMiss a d) = do S.hPut hdl n ; hPutChar hdl '\t'
                                   S.hPut hdl a ; hPutChar hdl '@'
                                   hPutStrLn hdl (show d)
 
@@ -55,6 +53,7 @@ print_summary mm = do
                    putChar '\n'
               | ( anno, () ) <- M.toList keymap ]
 
+
 write_file_pattern :: FilePath -> FilePath -> Iteratee [Annotation] IO ()
 write_file_pattern pat fname =
     bracket (liftIO $ openFile (make_oname pat) WriteMode) (liftIO . hClose)
@@ -64,7 +63,8 @@ write_file_pattern pat fname =
     (path, name) = splitFileName qname
 
     make_oname ('%':'%':cs) = '%' : make_oname cs
-    make_oname ('%':'s':cs) = qname ++ make_oname cs
+    make_oname ('%':'s':cs) = fname ++ make_oname cs
+    make_oname ('%':'f':cs) = qname ++ make_oname cs
     make_oname ('%':'p':cs) = path ++ make_oname cs
     make_oname ('%':'n':cs) = name ++ make_oname cs
     make_oname ('%':'e':cs) = ext ++ make_oname cs
@@ -75,22 +75,22 @@ write_file_pattern pat fname =
 readGeneTable :: Iteratee [Region] CPS RevSymtab
 readGeneTable = do
     mapStreamM_ $ \(gi, crm, strands, s, e) -> do
-        val <- findSymbol (L.toStrict gi)
+        val <- findSymbol gi
         sequence_ $ withSenses strands $ \str ->
             findDiet (str crm) >>=
                 liftIO . addI (min s e) (max s e) (fromIntegral val)
     invertTab <$> lift get_syms
 
-readChromTable :: L.ByteString -> ChromTable
-readChromTable = foldl' add M.empty . map L.words . L.lines
+readChromTable :: Monad m => Iteratee Bytes m ChromTable
+readChromTable = enumLinesBS =$ mapStream S.words =$ foldStream add M.empty
   where
-    add m (x:_) | L.head x == '#' = m
+    add m (x:_) | S.head x == '#' = m
     add m (ens:ucsc:ofs:_) =
-        let k = L.fromChunks [ S.copy (L.toStrict  ens) ]
-            x = L.fromChunks [ S.copy (L.toStrict ucsc) ]
-            y = ereadInt (L.toStrict ofs)
+        let k = S.copy ens
+            x = S.copy ucsc
+            y = ereadInt ofs
         in x `seq` y `seq` M.insert k (x,y) m
-    add _ (ens:_) = error $ "too few fields in translation of chromosome " ++ show (L.unpack ens)
+    add _ (ens:_) = error $ "too few fields in translation of chromosome " ++ show ens
     add m [     ] = m
 
 readMyBam :: Monad m => BamMeta -> Enumeratee [BamRec] [Region] m b
@@ -99,8 +99,8 @@ readMyBam hdr = filterStream (not . isUnmapped) ><> mapStream xlate
     getref r = sq_name $ getRef (meta_refs hdr) r
     str r = if b_flag r .&. 0x10 == 0 then Forward else Reverse
 
-    xlate r = ( L.fromStrict $ b_qname r
-              , L.fromStrict $ getref (b_rname r)
+    xlate r = ( b_qname r
+              , getref (b_rname r)
               , str r
               , b_pos r
               , b_pos r + alignedLength (b_cigar r) )
@@ -143,7 +143,7 @@ readMyFasta :: Monad m => Enumeratee Bytes [Region] m b
 readMyFasta = enumLinesBS ><> filterStream (S.isPrefixOf ">") ><> concatMapStream proc_line
   where
     proc_line = map parse_label . S.split ';' . S.drop 1
-    parse_label label = (L.fromStrict label, L.fromStrict crm, read_strand [str], lft, rht)
+    parse_label label = (label, crm, read_strand [str], lft, rht)
         where
             (crm, l1) = S.break (':'==) label
             (str, l2) = S.break (':'==) $ S.drop 1 l1
@@ -154,7 +154,7 @@ readMyBed :: Monad m => Enumeratee Bytes [Region] m b
 readMyBed = enumLinesBS ><> concatMapStream (go . S.split '\t')
   where go [] = []
         go (w:_) | w == "track" || S.head w == '#' = []
-        go (crm:s:e:gi:strand) = [(L.fromStrict gi, L.fromStrict crm, read_strand (drop 1 strand), ereadInt s, ereadInt e)]
+        go (crm:s:e:gi:strand) = [(gi, crm, read_strand (drop 1 strand), ereadInt s, ereadInt e)]
         go ws = error $ "not enough fields in BED file" ++ case ws of
                     [w] | length (S.words w) >= 4 -> " (whitespace instead of tabs?)"
                     _                             -> ""
@@ -163,7 +163,7 @@ read5col :: Monad m => Maybe ChromTable -> Enumeratee Bytes [Region] m b
 read5col mct = enumLinesBS ><> concatMapStream (maybe id (map . xlate_chrom) mct . go . S.words)
   where go [   ]                   = []
         go (w:_) | S.head w == '#' = []
-        go (gi:crm:s:e:strand)     = [(L.fromStrict gi, L.fromStrict crm, read_strand strand, ereadInt s, ereadInt e)]
+        go (gi:crm:s:e:strand)     = [(gi, crm, read_strand strand, ereadInt s, ereadInt e)]
         go _ = error $ "too few fields in legacy annotation file"
 
 read_strand :: [Bytes] -> Senses
@@ -176,13 +176,9 @@ read_strand (s:_) | S.null s        = Both
 xlate_chrom :: ChromTable -> Region -> Region
 xlate_chrom ct (n, crm, ss, s, e) = case M.lookup crm ct of
         Just (c,o) -> (n, c, ss, s+o-1, e+o)                        -- hit, so translate
-        Nothing -> error $ "chromosome unknown: " ++ L.unpack crm   -- translate failed
+        Nothing -> error $ "chromosome unknown: " ++ unpack crm     -- translate failed
 
 ereadInt :: Bytes -> Int
 ereadInt s = case S.readInt s of Just (x,_) -> x
                                  Nothing -> error $ "couldn't parse Int at " ++ S.unpack s
-
-myReadFilesWith :: ( FilePath -> L.ByteString -> IO a ) -> [ FilePath ] -> IO [a]
-myReadFilesWith k [] = fmap (:[]) $ L.getContents >>= k "stdin"
-myReadFilesWith k fs = forM fs $ \f -> if f == "-" then L.getContents >>= k "stdin" else L.readFile f >>= k f
 

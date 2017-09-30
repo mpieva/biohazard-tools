@@ -1,21 +1,19 @@
-{-# LANGUAGE Rank2Types #-}
 module Symtab where
 
-import qualified Data.HashMap.Strict                as M
-import qualified Data.ByteString.Lazy.Char8         as L
-import qualified Data.ByteString.Char8              as S
-import qualified Data.Vector                        as V
+import qualified Data.HashMap.Strict    as M
+import qualified Data.ByteString        as S
+import qualified Data.Vector            as V
 
 import Bio.Prelude
 import Control.Monad.IO.Class
 import Diet
 
-type Gene       = S.ByteString
-type Chrom      = L.ByteString
-type ChromTable = M.HashMap L.ByteString (Chrom, Int)
+type Gene       = Bytes
+type Chrom      = Bytes
+type ChromTable = M.HashMap Bytes (Chrom, Int)
 type Start      = Int
 type End        = Int
-type Region     = ( L.ByteString, Chrom, Senses, Start, End )
+type Region     = ( Bytes, Chrom, Senses, Start, End )
 
 data Senses = None | Forward | Reverse | Both deriving ( Show, Enum )
 
@@ -34,12 +32,11 @@ type RevSymtab  = V.Vector Gene
 
 findSymbol :: Bytes -> CPS Int
 findSymbol s = do
-    let !k = S.copy s
     t <- get_syms
-    case M.lookup k t of
+    case M.lookup s t of
         Just x  -> return x
         Nothing -> do let !l = M.size t
-                      modify_syms $ M.insert k l
+                      modify_syms $ M.insert (S.copy s) l
                       return l
 
 findDiet :: Either Chrom Chrom -> CPS MDiet

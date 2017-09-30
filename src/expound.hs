@@ -15,29 +15,25 @@
  - * Else only the forward strand is meant.
  - * Every annotation is reported at most once.
  -
- - Internally, we *always* use zero-based, half-open intervals.  We also
- - use UCSC-names whereever possible.  The only exception is if no
- - translation table is given, then we operate with Ensembl-names and
- - the program blows up if it hits a UCSC name.  In that case, the
- - occasional off-by-one error is easily possible.  -}
+ - Internally, we *always* use zero-based, half-open intervals.  This is
+ - also the assumption for the 5col format, except when translation
+ - from Emsembl to UCSC is requested.  Since Ensembl uses one-based,
+ - closed intervals, we'll follow that convention.  If that is
+ - confusing, just don't use stupid home grown fole formats. -}
 
-import Bio.Prelude           hiding ( Word, loop, bracket )
+import Bio.Prelude                    hiding ( Word, loop, bracket )
 import Bio.Iteratee
-import Control.Monad.Catch          ( bracket )
-import Data.Vector                  ( (!) )
-import Network.Socket        hiding ( send )
-import Paths_biohazard_tools        ( getDataFileName )
+import Control.Monad.Catch                   ( bracket )
+import Data.Vector                           ( (!) )
+import Network.Socket                 hiding ( send )
+import Paths_biohazard_tools                 ( version )
 import System.Console.GetOpt
-import System.Directory             ( doesFileExist )
-import System.IO                    ( IOMode(..), openFile, hClose )
+import System.IO                             ( IOMode(..), openFile, hClose )
 
 import qualified Data.Binary.Get                    as B
 import qualified Data.Binary.Put                    as B
-import qualified Data.ByteString.Lazy.Char8         as L
 import qualified Data.ByteString.Char8              as S
 import qualified Data.HashMap.Strict                as M
-import qualified Network.Socket.ByteString          as N ( recv )
-import qualified Network.Socket.ByteString.Lazy     as N ( sendAll )
 
 import Diet
 import FormattedIO
@@ -57,8 +53,7 @@ data Options = Options
      , optXForm       :: Region -> Region
      , optProgress    :: String -> IO ()
      , optPort        :: Maybe String
-     , optHost        :: Maybe String
-     }
+     , optHost        :: Maybe String }
 
 defaultOptions :: Options
 defaultOptions = Options
@@ -69,8 +64,7 @@ defaultOptions = Options
      , optXForm       = id
      , optProgress    = hPutStr stderr
      , optPort        = Nothing
-     , optHost        = Nothing
-     }
+     , optHost        = Nothing }
 
 options :: [OptDescr (Options -> IO Options)]
 options =
@@ -99,7 +93,9 @@ options =
 
     read_anno    f opts =    return $ opts { optAnnotations = (const readMyBed,f) : optAnnotations opts }
 
-    read_chroms  f opts = readDataFile f >>= \s -> return $ opts { optChromTable = Just (readChromTable s) }
+    read_chroms  f opts = enumFile defaultBufSize f readChromTable >>= run >>=
+                          \s -> return $ opts { optChromTable = Just s }
+
     set_nostrand   opts = return $ opts { optXForm = eraseStrand }
     set_summarize  opts = return $ opts { optOutput = Output (return ()) make_summary print_summary }
     set_opat     f opts = return $ opts { optOutput = Output (return ()) (write_file_pattern f) (const $ return ()) }
@@ -111,14 +107,20 @@ options =
 
 common_options :: [OptDescr (Options -> IO Options)]
 common_options =
-     [ Option "p"  ["port"] (ReqArg set_port "PORT") "listen on PORT or connect to PORT"
-     , Option "H"  ["host"] (ReqArg set_host "HOST") "connect to HOST"
-     , Option "q"  ["quiet"]       (NoArg set_quiet) "do not output progress reports"
-     , Option "h?" ["help","usage"]    (NoArg usage) "display this information" ]
+    [ Option "p"  ["port"] (ReqArg set_port "PORT") "listen on PORT or connect to PORT"
+    , Option "H"  ["host"] (ReqArg set_host "HOST") "connect to HOST"
+    , Option "q"  ["quiet"]       (NoArg set_quiet) "do not output progress reports"
+    , Option "h?" ["help","usage"]    (NoArg usage) "display this information"
+    , Option "V"  ["version"]          (NoArg vrsn) "display version number and exit" ]
   where
     set_port p opts = return $ opts { optPort     =          Just p }
     set_host h opts = return $ opts { optHost     =          Just h }
     set_quiet  opts = return $ opts { optProgress = \_ -> return () }
+
+    vrsn          _ = do pn <- getProgName
+                         hPutStrLn stderr $ pn ++ ", version " ++ showVersion version
+                         exitSuccess
+
     usage         _ = do pn <- getProgName
                          putStrLn (usageInfo (header pn) $ options ++ common_options)
                          exitSuccess
@@ -126,6 +128,7 @@ common_options =
 legacy_warning :: String
 legacy_warning = unlines [ "Warning: The five column format is not a standard format.  Consider"
                          , "         converting your annotations to the standard BED format." ]
+
 header :: String -> String
 header pn = unlines [ "Usage: " ++ pn ++ " [OPTION...] files...", ""
                     , "Annotates genomic regions given by coordinates.  Input files"
@@ -154,11 +157,7 @@ interpretWhich Fragment  = standardLookup lookupIPartial
 interpretWhich Inclusive = standardLookup lookupI
 interpretWhich Nearest   = lookupNearest
 
-readDataFile :: FilePath -> IO L.ByteString
-readDataFile fp | any ('/' ==) fp = L.readFile fp
-                | otherwise       = do e <- doesFileExist fp
-                                       if e then L.readFile fp
-                                            else getDataFileName fp >>= L.readFile
+
 main :: IO ()
 main = do
     args <- getArgs
@@ -214,6 +213,15 @@ myReadFiles prg fs it
   where
     enum1 nm en = en >=> run $ readInput =$ progressNum nm 16384 prg =$ it nm
 
+{- Okay, the C/S protocl is somewhat weird:  The server starts as a
+ - blank slate.  When the client connects, it uploads the annotation
+ - set, the begins to send annotation requests.  An attempt to send
+ - another annotation set is rejected (with the server committing
+ - suicide).  That's probably not worth repairing...
+ -
+ - A sensible server either already knows that annotaions, or accepts
+ - new annotations any time.  It could throw out the old ones, or keep a
+ - set... whatever, it needs some soul searching. -}
 
 run_client :: HostName -> ServiceName -> Options -> [FilePath] -> IO ()
 run_client h p opts files = undefined {- XXX do
@@ -316,9 +324,9 @@ serverfn pr fulltables (Nothing, fts) (StartAnno name) = do
 
 serverfn _ _ (Nothing,_) (AddAnno _) = fail "client tried growing an annotation set without opening it"
 serverfn _ _ (Just (name, annotab, symtab), st) (AddAnno (gi, chrom, strs, s, e)) =
-    runCPS (findSymbol (L.toStrict gi) >>= \val ->
-            sequence_ $ withSenses strs $ \str -> findDiet (str chrom) >>=
-                                 liftIO . addI (min s e) (max s e) (fromIntegral val))
+    runCPS (findSymbol gi >>= \val ->
+                    sequence_ $ withSenses strs $ \str -> findDiet (str chrom) >>=
+                            liftIO . addI (min s e) (max s e) (fromIntegral val))
            (\_ symtab' annotab' -> return ((Just (name, annotab', symtab'), st), Nothing))
            symtab annotab
 
@@ -349,34 +357,5 @@ combine_anno_sets (NearMiss a d) (NearMiss b d')
     | otherwise       = NearMiss b d'
 
 
-receive :: B.Get a -> Client a
-receive getter = Client $ \sock incoming -> loop sock (B.runGetIncremental getter `B.pushChunk` incoming)
-  where
-    loop _sock (B.Fail    _ _ m) = fail m
-    loop _sock (B.Done rest _ a) = return (a,rest)
-    loop  sock (B.Partial     k) = do inp <- N.recv sock 4000
-                                      if S.null inp then close sock >> fail "connection closed unexpectedly"
-                                                    else loop sock $ k $ Just inp
-
-send :: B.Put -> Client ()
-send putter = Client $ \sock incoming -> do N.sendAll sock $ B.runPut putter ; return ((), incoming)
-
-
-newtype Client a = Client { runClient :: Socket -> S.ByteString -> IO (a, S.ByteString) }
-
-instance Functor Client where
-    fmap f c = Client $ \s t -> runClient c s t >>= \(a, t') -> return (f a, t')
-
-instance Applicative Client where
-    pure a = Client $ \_ incoming -> return (a, incoming)
-    a <*> b = Client $ \s t -> runClient a s t >>= \(f, t') ->
-                               runClient b s t' >>= \(x, t'') ->
-                               return (f x, t'')
-instance Monad Client where
-    return a = Client $ \_ incoming -> return (a, incoming)
-    m >>= k = Client $ \sock incoming -> runClient m sock incoming >>= \(a, incoming') ->
-                                         runClient (k a) sock incoming'
-instance MonadIO Client where
-    liftIO k = Client $ \_ incoming -> k >>= \a -> return (a,incoming)
 
 

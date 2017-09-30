@@ -31,9 +31,11 @@ output is sent to stdout.
 .IP "\fB-O, \-output-pattern \fIpattern\fR"
 Defines a pattern for the construction of output file names.  One output
 file is created for each input file.  The output file name is obtained
-by replacing the strings \fI%p\fR in \fIpattern\fR by the path of the
-input file, \fI%n\fR by its name without extension, and \fI%e\fR by its
-extension.
+by replacing the strings \fI%p\fR in \fIpattern\fR with the path of the
+input file, \fI%n\fR with its name without extension, \fI%e\fR with its
+extension, \fI%f\fR with its full name without extension, and \fI%s\fR
+with its full name.  The string \fI%%\fR results in a single percent
+sign.
 
 .IP "\fB-a, \-annotation \fIannotation_file\fR"
 Defines an annotation file.  Annotations must be in BED format and are
