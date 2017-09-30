@@ -76,7 +76,7 @@ To do:
 * support Bam again
  * the 'Region' type might work better with strict ByteStrings now
  * maybe lazy ByteStrings become unnecessary
-* do something about the silly translation tables
 * see if C/S still works at all
 * add the broadcast discovery
 * integrate with `bam-mangle`
+* document --output-patterns properly

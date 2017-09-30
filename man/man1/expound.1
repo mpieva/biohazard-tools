@@ -47,19 +47,14 @@ but this file is in the legacy five column format.  Using this option
 is discouraged.
 
 .IP "\fB-c, \-chroms \fIchromosome_file\fR"
-Defines the chromosome translation table.  If a translation table is
-given,
+Defines the chromosome translation table with legacy annotations.  If a
+translation table is given,
 .B expound
 tries to translate
 .I Ensembl
-names into
+names and coordinates in annotations into
 .SM UCSC
-names, which allows input to be a mix of
-.SM UCSC
-and
-.I Ensembl
-data.  Without a translation table, either convention can be used, but
-it must be used consistently.
+names and coordinates.
 
 .IP "\fB-s, \-nostrand\fR"
 Ignore strand information in region files.  This is primarily useful

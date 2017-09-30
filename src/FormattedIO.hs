@@ -1,11 +1,14 @@
 {-# LANGUAGE LambdaCase #-}
 module FormattedIO where
 
-import Bio.Bam                      hiding ( Region(..) )
-import Bio.Prelude
+import Bio.Bam                   hiding ( Region(..) )
+import Bio.Prelude               hiding ( bracket )
+import Control.Monad.Catch              ( bracket )
+import Data.Functor.Identity
 import System.FilePath
 import System.IO
 
+import qualified Data.ByteString                    as B
 import qualified Data.ByteString.Char8              as S
 import qualified Data.ByteString.Lazy.Char8         as L
 import qualified Data.HashMap.Strict                as M
@@ -15,7 +18,6 @@ import Symtab
 
 data AnnoSet = Hits [Bytes] | NearMiss Bytes Int deriving Show
 type Annotation = ( L.ByteString, AnnoSet )
-
 
 print_header :: Handle -> IO ()
 print_header hdl = hPutStr hdl "#RegionName\tID\n"
@@ -53,78 +55,31 @@ print_summary mm = do
                    putChar '\n'
               | ( anno, () ) <- M.toList keymap ]
 
-{- make_summary :: [( FilePath, Iteratee [(t, AnnoSet)] m (HashMap Bytes Int)
-                      -> IO (Iteratee s IO (HashMap Bytes Integer)))] -> IO ()
-make_summary fs = do
-    mm <- forM fs $ \(_,enum) -> enum >=> run $ foldStream count_annos M.empty
-
-    -- let mm = [ foldl' count_annos M.empty annos
-             -- | ( _, annos ) <- annotated_files ]
-
-    -- XXX I should convert to set, shouldn't I?
-    let keymap = M.unions $ map (M.map (const ())) mm
-
-    putStr "ID"
-    forM_ fs $ \(f,_) -> do putChar '\t' ; putStr f
-    putChar '\n'
-
-    sequence_ [ do S.putStr anno
-                   forM_ mm $ \counts -> do let v = M.lookupDefault 0 anno counts
-                                            putChar '\t' ; putStr (show v)
-                   putChar '\n'
-              | ( anno, () ) <- M.toList keymap ] -}
-
-    {- make_summary :: [( FilePath, [Annotation] )] -> IO ()
-    make_summary annotated_files = do
-        let mm = [ foldl' count_annos M.empty annos
-                 | ( _, annos ) <- annotated_files ]
-
-        let keymap = M.unions $ map (M.map (const ())) mm
-
-        putStr "ID"
-        sequence_ [ do putChar '\t' ; putStr f | (f,_) <- annotated_files ]
-        putChar '\n'
-
-        sequence_ [ do S.putStr anno
-                       sequence_ [ do let v = M.lookupDefault 0 anno counts
-                                      putChar '\t' ; putStr (show v)
-                                 | counts <- mm ]
-                       putChar '\n'
-                  | ( anno, () ) <- M.toList keymap ] -}
-
-{- write_file_pattern :: FilePath -> [( FilePath, [(L.ByteString,AnnoSet)] )] -> IO ()
-write_file_pattern pat = mapM_ go
+write_file_pattern :: FilePath -> FilePath -> Iteratee [Annotation] IO ()
+write_file_pattern pat fname =
+    bracket (liftIO $ openFile (make_oname pat) WriteMode) (liftIO . hClose)
+            (\hdl -> liftIO (print_header hdl) >> make_table hdl)
   where
-    go (fname, recs) = withFile (make_oname pat) WriteMode $ \h -> make_table h recs
-      where
-        (qname, ext) = splitExtension fname
-        (path, name) = splitFileName qname
+    (qname, ext) = splitExtension fname
+    (path, name) = splitFileName qname
 
-        make_oname ('%':'%':cs) = '%' : make_oname cs
-        make_oname ('%':'s':cs) = qname ++ make_oname cs
-        make_oname ('%':'p':cs) = path ++ make_oname cs
-        make_oname ('%':'n':cs) = name ++ make_oname cs
-        make_oname ('%':'e':cs) = ext ++ make_oname cs
-        make_oname (      c:cs) = c : make_oname cs
-        make_oname [] = [] -}
+    make_oname ('%':'%':cs) = '%' : make_oname cs
+    make_oname ('%':'s':cs) = qname ++ make_oname cs
+    make_oname ('%':'p':cs) = path ++ make_oname cs
+    make_oname ('%':'n':cs) = name ++ make_oname cs
+    make_oname ('%':'e':cs) = ext ++ make_oname cs
+    make_oname (      c:cs) = c : make_oname cs
+    make_oname [          ] = [ ]
 
-readGeneTable :: (String -> IO ()) -> [Region] -> CPS r RevSymtab
-readGeneTable report inp = do
-    add_all inp (1::Int)
-    symtab <- get_syms
-    return $! invertTab symtab
-  where
-    report' n c = io . report $ "reading annotations: " ++ shows n "\27[K" ++ [c]
 
-    add_all [] n = report' n '\n'
-    add_all ((gi, crm, strands, s, e):xs) n = do
-        when (n `mod` 1024 == 0) (report' n '\r')
-        val <- findSymbol gi
+readGeneTable :: Iteratee [Region] CPS RevSymtab
+readGeneTable = do
+    mapStreamM_ $ \(gi, crm, strands, s, e) -> do
+        val <- findSymbol (L.toStrict gi)
         sequence_ $ withSenses strands $ \str ->
-                io . addI (min s e) (max s e) (fromIntegral val)
-                    =<< findDiet (str crm)
-        add_all xs $! n+1
-
+            findDiet (str crm) >>=
+                liftIO . addI (min s e) (max s e) (fromIntegral val)
+    invertTab <$> lift get_syms
 
 readChromTable :: L.ByteString -> ChromTable
 readChromTable = foldl' add M.empty . map L.words . L.lines
@@ -133,34 +88,10 @@ readChromTable = foldl' add M.empty . map L.words . L.lines
     add m (ens:ucsc:ofs:_) =
         let k = L.fromChunks [ S.copy (L.toStrict  ens) ]
             x = L.fromChunks [ S.copy (L.toStrict ucsc) ]
-            y = ereadInt ofs
+            y = ereadInt (L.toStrict ofs)
         in x `seq` y `seq` M.insert k (x,y) m
     add _ (ens:_) = error $ "too few fields in translation of chromosome " ++ show (L.unpack ens)
     add m [     ] = m
-
-readMySam :: [L.ByteString] -> [Region]
-readMySam = xlate . map (L.split '\t')
-  where
-    xlate ((qname : flag0 : rname : pos0 : _mapq : cigar : _) : rs)
-        | flag .&. 4 == 0 = ( qname, rname, str, pos-1, pos+len-1 ) : xlate rs
-      where
-        flag = ereadInt flag0
-        pos = ereadInt pos0
-        len = fromMaybe (error "parse error in CIGAR field") (textual_cigar_to_len cigar)
-        str = if flag .&. 0x10 == 0 then Forward else Reverse
-
-    xlate (_:rs) = xlate rs
-    xlate [] = []
-
-textual_cigar_to_len :: L.ByteString -> Maybe Int
-textual_cigar_to_len s0 = go s0 0
-  where
-    go s acc | L.null s = return acc
-    go s acc = do (n,s') <- L.readInt s
-                  (op,t) <- L.uncons s'
-                  go t $! acc + w n op
-
-    w n 'M' = n ; w n 'D' = n ; w n 'N' = n ; w _ _ = 0
 
 readMyBam :: Monad m => BamMeta -> Enumeratee [BamRec] [Region] m b
 readMyBam hdr = filterStream (not . isUnmapped) ><> mapStream xlate
@@ -184,20 +115,28 @@ readInput it = do
             peekStreamBS >>= \case
                 Nothing               -> return it                              -- empty?!
                 Just c | c == c2w '>' -> readMyFasta it                         -- Fasta?
-                       | c == c2w '@' -> joinI $ decodeSam $ flip readMyBam it  -- probably sam
-                -- XXX  take printable (!) chars until line feed
-                -- stopped at other than line feed? -> junk
-                -- first line has >11 fields and #5 llooks like a cigar? -> -- Sam?
-                       | otherwise    -> readMyBed it                           -- Bed?
-
-{- case dropWhile (L.all isSpace) (L.lines s) of
-    -- _        | isBam s                       -> readMyBam s
-    ls@(l:_) | L.head l == '>'               -> readMyFasta ls
-             | may_well_be_sam l             -> readMySam ls
-    ls                                       -> readMyBed ls
+                       | c == c2w '@' -> joinI $ decodeSam $ flip readMyBam it  -- probably Sam
+                       | otherwise    -> do
+                         (l1,c1) <- iLookAhead $ (,) <$> takeWhileBS isPrinting <*> peekStreamBS
+                         case trySam l1 of
+                            _ | c1 /= Just 10 && c1 /= Just 13 && c1 /= Nothing ->
+                                    error "this doesn't look like either Bed or Sam"
+                            Right _   -> joinI $ decodeSam $ flip readMyBam it  -- headerless Sam
+                            Left  e   -> (e::SomeException) `seq` readMyBed it  -- whatever, probably Bed
   where
-    may_well_be_sam l = let ws = L.split '\t' l
-                        in L.head l == '@' || (length ws >= 11 && isJust (textual_cigar_to_len (ws !! 5))) -}
+    isPrinting c = (c >= 32 && c < 127) || c == 9
+    trySam l1 = runIdentity $ enumPure1Chunk l1 >=> tryRun $ decodeSam' noRefs =$ stream2stream
+
+takeWhileBS :: (Word8 -> Bool) -> Iteratee Bytes m Bytes
+takeWhileBS p = icont (step mempty) Nothing
+  where
+    step bfr (Chunk str)
+      | B.null str     = icont (step bfr) Nothing
+      | otherwise      = case B.span p str of
+        (hd, tl)
+          | B.null tl -> icont (step (mappend bfr str)) Nothing
+          | otherwise -> idone (mappend bfr hd) (Chunk tl)
+    step bfr stream    = idone bfr stream
 
 
 readMyFasta :: Monad m => Enumeratee Bytes [Region] m b
@@ -211,21 +150,20 @@ readMyFasta = enumLinesBS ><> filterStream (S.isPrefixOf ">") ><> concatMapStrea
             (lft, l3) = fromMaybe (error "parse error in FASTA header") $ S.readInt $ S.drop 1 l2
             (rht,  _) = fromMaybe (error "parse error in FASTA header") $ S.readInt $ S.drop 1 l3
 
-
 readMyBed :: Monad m => Enumeratee Bytes [Region] m b
 readMyBed = enumLinesBS ><> concatMapStream (go . S.split '\t')
   where go [] = []
         go (w:_) | w == "track" || S.head w == '#' = []
-        go (crm:s:e:gi:strand) = [(L.fromStrict gi, L.fromStrict crm, read_strand (drop 1 strand), ereadIntS s, ereadIntS e)]
+        go (crm:s:e:gi:strand) = [(L.fromStrict gi, L.fromStrict crm, read_strand (drop 1 strand), ereadInt s, ereadInt e)]
         go ws = error $ "not enough fields in BED file" ++ case ws of
                     [w] | length (S.words w) >= 4 -> " (whitespace instead of tabs?)"
                     _                             -> ""
 
-read5cFile :: [L.ByteString] -> [Region]
-read5cFile = foldr go [] . map L.words
-  where go [] = id
-        go (w:_) | L.head w == '#' = id
-        go (gi:crm:s:e:strand) = (:) (gi, crm, read_strand (map L.toStrict strand), ereadInt s, ereadInt e)
+read5col :: Monad m => Maybe ChromTable -> Enumeratee Bytes [Region] m b
+read5col mct = enumLinesBS ><> concatMapStream (maybe id (map . xlate_chrom) mct . go . S.words)
+  where go [   ]                   = []
+        go (w:_) | S.head w == '#' = []
+        go (gi:crm:s:e:strand)     = [(L.fromStrict gi, L.fromStrict crm, read_strand strand, ereadInt s, ereadInt e)]
         go _ = error $ "too few fields in legacy annotation file"
 
 read_strand :: [Bytes] -> Senses
@@ -235,21 +173,14 @@ read_strand (s:_) | S.null s        = Both
                   | s == "0"        = Both
                   | otherwise       = Forward
 
-xlate_chrom :: Maybe ChromTable -> Region -> Region
-xlate_chrom Nothing reg = reg                                       -- no table, no translation
-xlate_chrom (Just ct) (n, crm, ss, s, e) = case M.lookup crm ct of
+xlate_chrom :: ChromTable -> Region -> Region
+xlate_chrom ct (n, crm, ss, s, e) = case M.lookup crm ct of
         Just (c,o) -> (n, c, ss, s+o-1, e+o)                        -- hit, so translate
         Nothing -> error $ "chromosome unknown: " ++ L.unpack crm   -- translate failed
 
-
-ereadInt :: L.ByteString -> Int
-ereadInt s = case L.readInt s of Just (x,_) -> x
-                                 Nothing -> error $ "couldn't parse Int at " ++ L.unpack s
-
-ereadIntS :: Bytes -> Int
-ereadIntS s = case S.readInt s of Just (x,_) -> x
-                                  Nothing -> error $ "couldn't parse Int at " ++ S.unpack s
-
+ereadInt :: Bytes -> Int
+ereadInt s = case S.readInt s of Just (x,_) -> x
+                                 Nothing -> error $ "couldn't parse Int at " ++ S.unpack s
 
 myReadFilesWith :: ( FilePath -> L.ByteString -> IO a ) -> [ FilePath ] -> IO [a]
 myReadFilesWith k [] = fmap (:[]) $ L.getContents >>= k "stdin"

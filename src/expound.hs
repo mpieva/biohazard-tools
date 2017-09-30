@@ -1,4 +1,4 @@
-{-# LANGUAGE ExistentialQuantification #-}
+{-# LANGUAGE ExistentialQuantification, Rank2Types #-}
 {- This is now supposed to read both Ensembl- and UCSC-style input, and
  - it had a very weird heuristic to convert them into each other.  We
  - drop this shit now, the rules are:  following the specification, all
@@ -52,7 +52,7 @@ data Output = forall u . Output (IO ()) (FilePath -> Iteratee [Annotation] IO u)
 data Options = Options
      { optOutput      :: Output
      , optWhich       :: Which
-     , optAnnotations :: [ (Maybe ChromTable -> [L.ByteString] -> [Region], FilePath) ]
+     , optAnnotations :: forall b . [( Maybe ChromTable -> Enumeratee Bytes [Region] IO b, FilePath )]
      , optChromTable  :: Maybe ChromTable
      , optXForm       :: Region -> Region
      , optProgress    :: String -> IO ()
@@ -72,26 +72,20 @@ defaultOptions = Options
      , optHost        = Nothing
      }
 
-options, common_options :: [OptDescr (Options -> IO Options)]
+options :: [OptDescr (Options -> IO Options)]
 options =
-     [ Option "o" ["output"]  (ReqArg set_output "FILE") "write output to FILE"
-     -- , Option ['O']     ["output-pattern"]
-         -- (ReqArg (\f opts -> return $ opts { optOutput = write_file_pattern f })
-                 -- "PAT")
-         -- "write output to files PAT, replace %s with input file basename"
-     , Option [ ] ["summarize"]    (NoArg set_summarize) "summarize annotations to stdout, don't generate a table"
-     -- [ Option ['a']     ["annotation"]   -- XXX
-         -- (ReqArg (\f opts -> return $ opts { optAnnotations = (const readMyBed,f) : optAnnotations opts })
-                 -- "FILE")
-         -- "read annotations from FILE in BED format"
-     , Option "A" ["legacy-annotation"] (ReqArg read_anno_5c "FILE") "read annotations from FILE in legacy five column format"
-     , Option "c" ["chroms"] (ReqArg read_chroms "FILE") "read chr translation table from FILE"
-     , Option "s" ["nostrand"]     (NoArg  set_nostrand) "ignore strand information in region files"
-     , Option [ ] ["covered"]      (NoArg   set_covered) "output only annotations that cover the query interval"
-     , Option [ ] ["partial"]      (NoArg   set_partial) "output only annotations that cover only part of the query"
-     , Option [ ] ["inclusive"]    (NoArg set_inclusive) "output annotations that overlap at least part of the query"
-     , Option [ ] ["nearest"]      (NoArg   set_nearest) "output the closest annotation if none overlaps"
-     ]
+     [ Option "o" ["output"]              (ReqArg set_output "FILE") "write output to FILE"
+     , Option "O" ["output-pattern"]         (ReqArg set_opat "PAT") "write output to files following PAT"
+     , Option [ ] ["summarize"]                (NoArg set_summarize) "only summarize annotations to stdout"
+     , Option "a" ["annotation"]           (ReqArg read_anno "FILE") "read annotations from FILE in Bed format"
+     , Option "A" ["legacy-annotation"] (ReqArg read_anno_5c "FILE") "read annotations from FILE in legacy 5c format"
+     , Option "c" ["chroms"]             (ReqArg read_chroms "FILE") "read chr translation table from FILE"
+
+     , Option "s" ["nostrand"]  (NoArg  set_nostrand) "ignore strand information in region files"
+     , Option [ ] ["covered"]   (NoArg   set_covered) "output only annotations that cover the query interval"
+     , Option [ ] ["partial"]   (NoArg   set_partial) "output only annotations that cover only part of the query"
+     , Option [ ] ["inclusive"] (NoArg set_inclusive) "output annotations that overlap at least part of the query"
+     , Option [ ] ["nearest"]   (NoArg   set_nearest) "output the closest annotation if none overlaps" ]
   where
     set_output f opts = return $ opts { optOutput = Output h b t }
       where h   = print_header stdout
@@ -101,34 +95,33 @@ options =
                                            (\hdl -> liftIO (print_header hdl) >> make_table hdl)
 
     read_anno_5c f opts = do hPutStr stderr legacy_warning
-                             let as = (\ct -> map (xlate_chrom ct) . read5cFile,f)
-                             return $ opts { optAnnotations = as : optAnnotations opts }
+                             return $ opts { optAnnotations = (read5col, f) : optAnnotations opts }
 
-    read_chroms f opts = readDataFile f >>= \s -> return $ opts { optChromTable = Just (readChromTable s) }
-    set_nostrand  opts = return $ opts { optXForm = eraseStrand }
-    set_summarize opts = return $ opts { optOutput = Output (return ()) make_summary print_summary }
+    read_anno    f opts =    return $ opts { optAnnotations = (const readMyBed,f) : optAnnotations opts }
 
-    set_covered   opts = return $ opts { optWhich =   Covered }
-    set_partial   opts = return $ opts { optWhich =  Fragment }
-    set_inclusive opts = return $ opts { optWhich = Inclusive }
-    set_nearest   opts = return $ opts { optWhich =   Nearest }
+    read_chroms  f opts = readDataFile f >>= \s -> return $ opts { optChromTable = Just (readChromTable s) }
+    set_nostrand   opts = return $ opts { optXForm = eraseStrand }
+    set_summarize  opts = return $ opts { optOutput = Output (return ()) make_summary print_summary }
+    set_opat     f opts = return $ opts { optOutput = Output (return ()) (write_file_pattern f) (const $ return ()) }
 
+    set_covered    opts = return $ opts { optWhich =   Covered }
+    set_partial    opts = return $ opts { optWhich =  Fragment }
+    set_inclusive  opts = return $ opts { optWhich = Inclusive }
+    set_nearest    opts = return $ opts { optWhich =   Nearest }
+
+common_options :: [OptDescr (Options -> IO Options)]
 common_options =
-     [ Option ['p']     ["port"]
-         (ReqArg (\ p opts -> return $ opts { optPort = Just p } ) "PORT")
-         "listen on PORT or connect to PORT"
-     , Option ['H']     ["host"]
-         (ReqArg (\ h opts -> return $ opts { optHost = Just h }) "HOST")
-         "connect to HOST"
-     , Option ['q']     ["quiet"]
-         (NoArg (\ opts -> return $ opts { optProgress = \_ -> return () }))
-         "do not output progress reports"
-     , Option ['h','?'] ["help","usage"]
-         (NoArg (\ _ -> do pn <- getProgName
-                           putStrLn (usageInfo (header pn) $ options ++ common_options) ; exitSuccess ))
-         "display this information"
-     ]
-
+     [ Option "p"  ["port"] (ReqArg set_port "PORT") "listen on PORT or connect to PORT"
+     , Option "H"  ["host"] (ReqArg set_host "HOST") "connect to HOST"
+     , Option "q"  ["quiet"]       (NoArg set_quiet) "do not output progress reports"
+     , Option "h?" ["help","usage"]    (NoArg usage) "display this information" ]
+  where
+    set_port p opts = return $ opts { optPort     =          Just p }
+    set_host h opts = return $ opts { optHost     =          Just h }
+    set_quiet  opts = return $ opts { optProgress = \_ -> return () }
+    usage         _ = do pn <- getProgName
+                         putStrLn (usageInfo (header pn) $ options ++ common_options)
+                         exitSuccess
 
 legacy_warning :: String
 legacy_warning = unlines [ "Warning: The five column format is not a standard format.  Consider"
@@ -194,46 +187,23 @@ main = do
 run_standalone :: Options -> [FilePath] -> IO ()
 run_standalone opts files = do
     emptyD <- unsafeFreezeDiet =<< newDiet
-    (syms,anno) <- execCPS $ do
-                    s <- readGeneTable (optProgress opts) . concat =<< forM (optAnnotations opts)
-                            (\( reader, filepath ) ->
-                                    reader (optChromTable opts). L.lines
-                                    <$> io (if filepath == "-" then L.getContents else L.readFile filepath))
-                    a <- io . sequenceA . M.map unsafeFreezeDiet =<< get_anno
-                    return (s,a)
-
-    let annotate' :: (RevSymtab -> Start -> End -> [IDiet] -> AnnoSet)
-                  -> (L.ByteString, Chrom, Senses, Start, End)
-                  -> (L.ByteString, AnnoSet)
-        annotate' which (name,c,strs,s,e) =
-                (name, which syms s e (withSenses strs $ \str -> M.lookupDefault emptyD (str c) anno))
-
-    {- let annotate1 :: FilePath -> (RevSymtab -> t2 -> t1 -> [IDiet] -> t)
-                  -> Int -> (L.ByteString, Chrom, Senses, t2, t1)
-                  -> IO (L.ByteString, t)
-        annotate1 filename which num (name,c,strs,s,e) = do
-                when ((1+num) `mod` 16384 == 0) . optProgress opts .
-                    shows filename . (++) " (" . shows num . (++) "): " .
-                    (++) (L.unpack name) $ "\27[K\r"
-                return (name, which syms s e
-                    (withSenses strs $ \str -> M.lookupDefault emptyD (str c) anno)) -}
-
-        {- annotate :: (RevSymtab -> Start -> End -> [IDiet] -> t)
-                 -> FilePath -> L.ByteString
-                 -> IO (FilePath, [(L.ByteString, t)])
-        annotate which f s = (,) f <$> zipWithLM (annotate1 f which) [0::Int ..]
-                                                 (map (optXForm opts) $ readInput s) -}
-
+    (!syms,!anno) <- foldr (>=>) run [ enum $= reader (optChromTable opts)
+                                     | (reader, filepath) <- optAnnotations opts
+                                     , let enum = if filepath == "-"
+                                                  then enumFd   defaultBufSize stdInput
+                                                  else enumFile defaultBufSize filepath ] $
+                        joinI $ progressNum "reading annotations" 16384 (optProgress opts) $
+                        ilift execCPS $ (,) <$>
+                                readGeneTable <*> (liftIO . mapM unsafeFreezeDiet =<< lift get_anno)
     case optOutput opts of
         Output hdr iter summ -> do
             hdr
             myReadFiles (optProgress opts) files >=> summ $ \file ->
-                let wh = (interpretWhich $ optWhich opts)
-                in mapStream (annotate' wh . optXForm opts) =$ iter file
+                let annotate (name,c,strs,s,e) =
+                            (,) name $ interpretWhich (optWhich opts) syms s e $
+                            withSenses strs $ \str -> M.lookupDefault emptyD (str c) anno
+                in mapStream (annotate . optXForm opts) =$ iter file
 
-
-    -- io $ optOutput opts =<< myReadFilesWith (annotate $ interpretWhich $ optWhich opts) files
-    -- io $ optProgress opts "\n"
 
 myReadFiles :: (String -> IO ()) -> [FilePath] -> (FilePath -> Iteratee [Region] IO b) -> IO [b]
 myReadFiles prg fs it
@@ -243,6 +213,7 @@ myReadFiles prg fs it
                                     else enum1 f (enumFile defaultBufSize f)
   where
     enum1 nm en = en >=> run $ readInput =$ progressNum nm 16384 prg =$ it nm
+
 
 run_client :: HostName -> ServiceName -> Options -> [FilePath] -> IO ()
 run_client h p opts files = undefined {- XXX do
@@ -324,12 +295,10 @@ run_server svname opts = do
     bind listener $ SockAddrInet port iNADDR_ANY
     listen listener 1
     optProgress opts $ "waiting for connections on port " ++ shows port "\27[K\n"
-    let loop = do (sk, addr) <- accept listener
-                  optProgress opts $ "connection from " ++ shows addr "\27[K\n"
-                  let pr m = optProgress opts $ shows addr ": " ++ m
-                  _ <- forkIO $ service getRequest putResponse (serverfn pr full_tables) sk (Nothing,[]) >> return ()
-                  loop
-    loop
+    forever $ do (sk, addr) <- accept listener
+                 optProgress opts $ "connection from " ++ shows addr "\27[K\n"
+                 let pr m = optProgress opts $ shows addr ": " ++ m
+                 void $ forkIO $ void $ service getRequest putResponse (serverfn pr full_tables) sk (Nothing,[])
 
 serverfn :: (String -> IO ())
          -> MVar FullTables
@@ -347,9 +316,9 @@ serverfn pr fulltables (Nothing, fts) (StartAnno name) = do
 
 serverfn _ _ (Nothing,_) (AddAnno _) = fail "client tried growing an annotation set without opening it"
 serverfn _ _ (Just (name, annotab, symtab), st) (AddAnno (gi, chrom, strs, s, e)) =
-    runCPS (findSymbol gi >>= \val ->
+    runCPS (findSymbol (L.toStrict gi) >>= \val ->
             sequence_ $ withSenses strs $ \str -> findDiet (str chrom) >>=
-                                 io . addI (min s e) (max s e) (fromIntegral val))
+                                 liftIO . addI (min s e) (max s e) (fromIntegral val))
            (\_ symtab' annotab' -> return ((Just (name, annotab', symtab'), st), Nothing))
            symtab annotab
 
@@ -407,7 +376,6 @@ instance Monad Client where
     return a = Client $ \_ incoming -> return (a, incoming)
     m >>= k = Client $ \sock incoming -> runClient m sock incoming >>= \(a, incoming') ->
                                          runClient (k a) sock incoming'
-
 instance MonadIO Client where
     liftIO k = Client $ \_ incoming -> k >>= \a -> return (a,incoming)
 

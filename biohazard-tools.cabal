@@ -33,7 +33,6 @@ source-repository head
 Flag judy
   Description: link with Judy library
   Default:     True
-  Manual:      False
 
 
 Test-suite bam-sort
