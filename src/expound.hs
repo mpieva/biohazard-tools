@@ -23,17 +23,19 @@
 
 import Bio.Prelude                    hiding ( Word, loop, bracket )
 import Bio.Iteratee
+import Control.Concurrent.Async
 import Control.Monad.Catch                   ( bracket )
+import Control.Monad.Trans.RWS.Strict hiding ( listen, reader )
+import Data.Binary.Put                       ( runPut )
 import Data.Vector                           ( (!) )
 import Network.Socket                 hiding ( send )
 import Paths_biohazard_tools                 ( version )
 import System.Console.GetOpt
 import System.IO                             ( IOMode(..), openFile, hClose )
 
-import qualified Data.Binary.Get                    as B
-import qualified Data.Binary.Put                    as B
 import qualified Data.ByteString.Char8              as S
 import qualified Data.HashMap.Strict                as M
+import qualified Network.Socket.ByteString.Lazy     as N ( sendAll )
 
 import Diet
 import FormattedIO
@@ -213,82 +215,74 @@ myReadFiles prg fs it
   where
     enum1 nm en = en >=> run $ readInput =$ progressNum nm 16384 prg =$ it nm
 
-{- Okay, the C/S protocl is somewhat weird:  The server starts as a
- - blank slate.  When the client connects, it uploads the annotation
- - set, the begins to send annotation requests.  An attempt to send
- - another annotation set is rejected (with the server committing
- - suicide).  That's probably not worth repairing...
- -
- - A sensible server either already knows that annotaions, or accepts
- - new annotations any time.  It could throw out the old ones, or keep a
- - set... whatever, it needs some soul searching. -}
 
 run_client :: HostName -> ServiceName -> Options -> [FilePath] -> IO ()
-run_client h p opts files = undefined {- XXX do
+run_client h p opts files = do
     let hints = defaultHints { addrFlags = [AI_ADDRCONFIG, AI_CANONNAME] }
     addrs <- getAddrInfo (Just hints) (Just h) (Just p)
     let addr = head addrs
     sock <- socket (addrFamily addr) (addrSocketType addr) (addrProtocol addr)
     connect sock (addrAddress addr)
 
-    (_, incoming) <- runClient (forM (optAnnotations opts) $ \( reader, filepath ) ->
-                                    sendGeneTable filepath . reader (optChromTable opts) . L.lines
-                                    =<< lift (if filepath == "-" then L.getContents else L.readFile filepath))
-                               sock S.empty
+    -- request/upload each annotation set
+    buf' <- reduceM (optAnnotations opts) S.empty $ \buf (reader, fp) ->
+                let enum = if fp == "-" then enumFd   defaultBufSize stdInput
+                                        else enumFile defaultBufSize fp in
+                enum >=> run $
+                joinI $ reader (optChromTable opts) $
+                joinI $ progressNum ("uploading " ++ fp) 16384 (optProgress opts) $
+                ilift (runClient sock buf) $ sendGeneTable fp >> lift get
 
-    optOutput opts =<< myReadFilesWith (annotate sock incoming) files
+    -- fork thread to upload all the input
+    uploader <- async $ do void $ myReadFiles (optProgress opts) files $ \file -> do
+                                lift . N.sendAll sock . runPut . putRequest $ StartFile (S.pack file)
+                                mapStreamM_ ( N.sendAll sock . runPut . putRequest
+                                            . Anno (optWhich opts) . optXForm opts )
+                           N.sendAll sock . runPut $ putRequest EndStream
+    link uploader
+
+    -- receive responses, print output
+    case optOutput opts of
+        Output hdr iter summ -> do
+            hdr
+            runClient sock buf' >=> summ $ myReadNet iter
+
+    void $ wait uploader
     close sock
 
   where
-    sendGeneTable fp regions = do
-        send (putRequest (StartAnno (S.pack fp)))
-        resp <- receive getResponse
-        case resp of KnownAnno -> return ()
-                     UnknownAnno -> do let loop _ [] = return ()
-                                           loop i (r:rs) = do
-                                                when ((i+1) `mod` 65556 == 0) $ lift $ optProgress opts $
-                                                    "uploading " ++ shows fp ": " ++ shows i "\27[K\r"
-                                                send (putRequest (AddAnno r))
-                                                (loop $! i+1) rs
-                                       loop (0::Int) regions
-                                       send (putRequest EndAnno)
-                                       return ()
-                     _ -> fail "WTF?!"
+    runClient sock incoming cl = fst <$> evalRWST cl sock incoming
+    reduceM xs a f = foldM f a xs
 
-    annotate sock incoming fp s = do
-        done <- newMVar False
-        in_flight <- newMVar (0::Int)
+    -- Ask the server for an annotation set, upload it if necessary.
+    sendGeneTable :: FilePath -> Iteratee [Region] Client ()
+    sendGeneTable fp = do
+        lift . send . putRequest $ StartAnno (S.pack fp)
+        resp <- lift $ receive getResponse
+        case resp of
+            KnownAnno   -> return ()
+            UnknownAnno -> do mapStreamM_ $ \r -> send (putRequest (AddAnno r))
+                              lift . send $ putRequest EndAnno
+            _           -> fail "the server talks nonsense"
 
-        _ <- forkIO $ do let inp = map (optXForm opts) $ readInput s
-                         forM_ inp $ \rgn -> do takeMVar in_flight >>= \f -> putMVar in_flight $! succ f
-                                                N.sendAll sock $ B.runPut $ putRequest (Anno (optWhich opts) rgn)
-                         _ <- takeMVar done
-                         putMVar done True
+    -- Reads from network and passes it on, calling the continuation
+    -- once for each "file".
+    myReadNet :: (FilePath -> Iteratee [Annotation] IO b) -> Client [b]
+    myReadNet k = do rsp <- receive getResponse
+                     case rsp of
+                         StartedFile nm -> go [] (k $ unpack nm)
+                         EndedStream    -> return []
+                         _              -> huh
+      where
+        huh = fail "unexpected answer from server"
 
-        let loop i (B.Done   rest _ (Result name annoset)) = do
-                    ff <- takeMVar in_flight
-                    putMVar in_flight $! ff-1
-                    f <- if ff == 1 && S.null rest
-                           then readMVar done
-                           else return False
-                    rs <- if f then return []
-                               else unsafeInterleaveIO $ loop (1+i)
-                                        (B.runGetIncremental getResponse `B.pushChunk` rest)
-                    when ((1+i) `mod` 16384 == 0) . optProgress opts .
-                        shows fp . (++) " (" . shows i . (++) "): " .
-                        (++) (L.unpack name) $ "\27[K\r"
-                    return ((name,annoset):rs)
-
-            loop _ (B.Done _ _ _) = do close sock
-                                       fail "unexpected answer from server"
-            loop _ (B.Fail _ _ m) = do close sock
-                                       fail m
-            loop i (B.Partial  k) = do inp <- N.recv sock 4000
-                                       if S.null inp then close sock >>
-                                                          fail "connection closed unexpectedly"
-                                                     else loop i (k $ Just inp)
-
-        (,) fp <$> loop (0::Int) (B.runGetIncremental getResponse `B.pushChunk` incoming) -}
+        go acc it = do
+            rsp <- receive getResponse
+            case rsp of
+                Result nm annos -> lift (enumPure1Chunk [(nm,annos)] it) >>= go acc
+                StartedFile nm  -> lift (run it) >>= \ !r -> go (r:acc) (k $ unpack nm)
+                EndedStream     -> return $ reverse acc
+                _               -> huh
 
 
 type HalfTable = ( S.ByteString, MAnnotab, Symtab )
@@ -321,6 +315,9 @@ serverfn pr fulltables (Nothing, fts) (StartAnno name) = do
                       return ( (Nothing, m:fts), Just KnownAnno)
         Nothing -> do pr $ "starting new annotation set " ++ shows name "\n"
                       return ( (Just (name, M.empty, M.empty), fts), Just UnknownAnno )
+
+serverfn _ _ st (StartFile nm) = return ( st, Just $ StartedFile nm )
+serverfn _ _ st (EndStream)    = return ( st, Just $ EndedStream )
 
 serverfn _ _ (Nothing,_) (AddAnno _) = fail "client tried growing an annotation set without opening it"
 serverfn _ _ (Just (name, annotab, symtab), st) (AddAnno (gi, chrom, strs, s, e)) =

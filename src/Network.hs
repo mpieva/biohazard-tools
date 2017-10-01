@@ -16,12 +16,41 @@ import Symtab
 
 data Which   = Covered | Fragment | Inclusive | Nearest deriving (Enum, Show)
 
+--  The protocol, initially:
+--  -> StartAnno name
+--          Open the annotation set named "name".
+--  <- KnownAnno
+--          The server already has this set and brought it into scope or
+--  <- UnknownAnno
+--          The server doesn't know about this set and created it.
+--
+--  With an open annotation set:
+--  -> AddAnno region
+--          Add to the currently open annotation set or
+--  -> EndAnno
+--          The set is complete now and to be brought into scope.
+--
+--  At any time:
+--  -> Anno which region
+--          Request annotation of "region" using lookup strategy
+--          "which" from all sets in scope.
+--  <- Result name annos
+--          Resulting annotation for the region named "name".
+
 data Request = StartAnno Bytes
              | AddAnno Region
              | EndAnno
-             | Anno Which Region deriving Show
+             | StartFile Bytes
+             | Anno Which Region
+             | EndStream
+    deriving Show
 
-data Response = UnknownAnno | KnownAnno | Result Bytes AnnoSet deriving Show
+data Response = UnknownAnno
+              | KnownAnno
+              | StartedFile Bytes
+              | Result Bytes AnnoSet
+              | EndedStream
+    deriving Show
 
 putWord :: ( Bits a, Integral a ) => a -> B.Put
 putWord i | i < 0x80  = do B.putWord8 (fromIntegral i)
@@ -41,17 +70,17 @@ getRequest = do key <- getWord
                     0 -> StartAnno <$> getString
                     1 -> AddAnno <$> ( (,,,,) <$> getString
                                               <*> getString
-                                              <*> (toEnum <$> getWord)
+                                              <*> fmap toEnum getWord
                                               <*> getWord
                                               <*> getWord )
                     2 -> return EndAnno
-                    _ -> pack (toEnum (key - 3)) <$> getString
-                                                 <*> getString
-                                                 <*> (toEnum <$> getWord)
-                                                 <*> getWord
-                                                 <*> getWord
-  where
-    pack w n m s u v = Anno w (n,m,s,u,v)
+                    3 -> StartFile <$> getString
+                    4 -> return EndStream
+                    _ -> Anno (toEnum (key - 5)) <$> ( (,,,,) <$> getString
+                                                              <*> getString
+                                                              <*> fmap toEnum getWord
+                                                              <*> getWord
+                                                              <*> getWord )
 
 putRequest :: Request -> B.Put
 putRequest (StartAnno name)      = do putWord (0::Int)
@@ -63,7 +92,10 @@ putRequest (AddAnno (n,m,s,u,v)) = do putWord (1::Int)
                                       putWord $ u
                                       putWord $ v
 putRequest (EndAnno)             = do putWord (2::Int)
-putRequest (Anno w (n,m,s,u,v))  = do putWord $ fromEnum w + 3
+putRequest (StartFile name)      = do putWord (3::Int)
+                                      putString name
+putRequest (EndStream)           = do putWord (4::Int)
+putRequest (Anno w (n,m,s,u,v))  = do putWord $ fromEnum w + 5
                                       putString n
                                       putString m
                                       putWord $ fromEnum s
@@ -75,6 +107,8 @@ getResponse = do key <- getWord
                  case key :: Int of
                     0 -> return UnknownAnno
                     1 -> return KnownAnno
+                    3 -> StartedFile <$> getString
+                    4 -> return EndedStream
                     _ -> do n <- getString
                             l <- getWord
                             case l of 0 -> do a <- getString
@@ -91,8 +125,13 @@ putResponse (UnknownAnno) = putWord (0::Int)
 putResponse (KnownAnno)   = putWord (1::Int)
 putResponse (Result n as) = do putWord (2::Int)
                                putString n
-                               case as of NearMiss a d -> do putWord (if d >= 0 then 0 else 1 ::Int) ; putString a ; putWord (abs d)
-                                          Hits hs      -> do putWord (length hs + 2) ; mapM_ putString hs
+                               case as of NearMiss a d -> do putWord (if d >= 0 then 0 else 1 ::Int)
+                                                             putString a
+                                                             putWord (abs d)
+                                          Hits hs      -> do putWord (length hs + 2)
+                                                             mapM_ putString hs
+putResponse (StartedFile nm) = putWord (3::Int) >> putString nm
+putResponse (EndedStream)    = putWord (4::Int)
 
 
 getString :: B.Get Bytes

@@ -165,7 +165,8 @@ Executable expound
                        BangPatterns, Rank2Types, LambdaCase
   Hs-Source-Dirs:      src
   Other-modules:       Diet, FormattedIO, Network, Symtab, Paths_biohazard_tools
-  Build-depends:       base                     >= 4.6 && < 4.11,
+  Build-depends:       async                    >= 2.0 && < 2.2,
+                       base                     >= 4.6 && < 4.11,
                        binary                   >= 0.8.3 && < 0.9,
                        biohazard                >= 0.6.15 && < 0.7,
                        bytestring               >= 0.10.2 && < 0.11,

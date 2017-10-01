@@ -73,6 +73,5 @@ code is barely kept alive.
 
 To do:
 
-* see if C/S still works at all
 * add the broadcast discovery
 * integrate with `bam-mangle`
