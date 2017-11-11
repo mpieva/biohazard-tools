@@ -1,4 +1,3 @@
-{-# LANGUAGE RecordWildCards #-}
 -- Generic bam mangler.  Mostly filters, some mutating operations, some
 -- extraction of data.  Simple expression language, comparable to Unix
 -- 'find', but not to 'awk'.
@@ -177,8 +176,8 @@ p_bool_atom = choice
     named_predicate "alternative"  = getF isAlternative
     named_predicate "exact-index"  = getF isExactIndex
 
-    named_predicate "clear-failed" = return $ do_clearF
-    named_predicate "set-failed"   = return $ do_setF
+    named_predicate "clear-failed" = return do_clearF
+    named_predicate "set-failed"   = return do_setF
     named_predicate "set-trimmed"  = return $ setFF 1
     named_predicate "set-merged"   = return $ setFF 2
 
@@ -251,13 +250,13 @@ p_num_atom = ( pure . either fromIntegral id <$> naturalOrFloat )
     getF f = return $ gets $ fromIntegral . f . unpackBam
 
     numeric_field "RNAME"       = getF $ unRefseq . b_rname
-    numeric_field "POS"         = getF $              b_pos
+    numeric_field "POS"         = getF                b_pos
     numeric_field "MRNM"        = getF $ unRefseq .  b_mrnm
     numeric_field "RNEXT"       = getF $ unRefseq .  b_mrnm
-    numeric_field "MPOS"        = getF $             b_mpos
-    numeric_field "PNEXT"       = getF $             b_mpos
-    numeric_field "ISIZE"       = getF $            b_isize
-    numeric_field "TLEN"        = getF $            b_isize
+    numeric_field "MPOS"        = getF               b_mpos
+    numeric_field "PNEXT"       = getF               b_mpos
+    numeric_field "ISIZE"       = getF              b_isize
+    numeric_field "TLEN"        = getF              b_isize
     numeric_field "MAPQ"        = getF $ unQ .       b_mapq
     numeric_field "LENGTH"      = getF $ V.length .   b_seq
     numeric_field "LEN"         = getF $ V.length .   b_seq

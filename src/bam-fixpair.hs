@@ -1,4 +1,4 @@
-{-# LANGUAGE CPP, Rank2Types #-}
+{-# LANGUAGE CPP, Rank2Types, LambdaCase #-}
 {-
 This is a validator/fixup for paired end BAM files, that is more
 efficient than 'samtools sort -n' followed by 'samtools fixmate'.
@@ -133,7 +133,7 @@ pipe_to :: FilePath -> [String] -> ([Config -> IO Config], t1, t2) -> ([Config -
 pipe_to cmd args (opts, errs, fs) = (mkout : opts, errs, fs)
   where
     mk1out key test (as, flush, qs, vs, ps, rfds)
-        | all (/= key) as = return (as, flush, qs, vs, ps, rfds)
+        | key `notElem` as = return (as, flush, qs, vs, ps, rfds)
         | otherwise = do
             (pout, pin) <- createPipe
             setFdOption pin CloseOnExec True
@@ -161,7 +161,7 @@ pipe_to cmd args (opts, errs, fs) = (mkout : opts, errs, fs)
             mapStreamM_ (\br -> atomically $ do ns <- mapM readTVar vars
                                                 when (minimum ns > 64) retry
                                                 flush_bam br)
-            liftIO $ do atomically $ mapM_ (flip writeTQueue Nothing) queues
+            liftIO $ do atomically $ mapM_ (`writeTQueue` Nothing) queues
                         mapM_ wait pids
                         waitForProcess pid_cmd }
 
@@ -191,7 +191,7 @@ main = do (args,cmd) <- break (`elem` ["-X","--exec"]) `fmap` getArgs
             filterStream (infilter config)                  =$
             re_pair config (meta_refs hdr)                  =$
             mapChunks (maybe id do_trim (fixsven config))   =$
-            (output config) (add_pg hdr)
+            output config (add_pg hdr)
 
 
 -- | Fix a pair of reads.  Right now fixes their order and checks that
@@ -202,7 +202,7 @@ fixmate r s | isFirstMate (unpackBam r) && isSecondMate (unpackBam s) = sequence
             | isSecondMate (unpackBam r) && isFirstMate (unpackBam s) = sequence [go s r, go r s]
             | otherwise = liftIO $ do hPutStrLn stderr $ "Names match, but 1st mate / 2nd mate flags do not: "
                                                        ++ unpack (b_qname (unpackBam r))
-                                      hPutStrLn stderr $ "There is no clear way to fix this file.  Giving up."
+                                                       ++ "\nThere is no obvious way to fix this file.  Giving up."
                                       exitFailure
   where
     -- position of 5' end
@@ -480,7 +480,7 @@ re_pair cf rs = eneeCheckIfDone $ \out -> runMating go finish ms0 out (QS makePQ
     go = fetchNext >>= go'
 
     -- At EOF, flush everything.
-    go' Nothing = peekMin right_here >>= \mm -> case mm of
+    go' Nothing = peekMin right_here >>= \case
             Just (ByQName _ _ qq) -> do complete_here (br_self_pos qq)
                                         flush_here Nothing  -- flush_here loops back here
             Nothing               -> flush_in_order  -- this ends the whole operation
@@ -489,7 +489,7 @@ re_pair cf rs = eneeCheckIfDone $ \out -> runMating go finish ms0 out (QS makePQ
     -- Paired read?  Does it belong 'here'?
     go' (Just (Singleton x)) = modify (\c -> c { singletons = 1 + singletons c }) >> yield [unpackBam x] >> go
     go' (Just (Pair    x y)) = fixmate x y >>= yield >> go
-    go' (Just (LoneMate  r)) = peekMin right_here >>= \mm -> case mm of
+    go' (Just (LoneMate  r)) = peekMin right_here >>= \case
 
             -- there's nothing else here, so here becomes redefined
             Nothing             -> enqueueThis r >> go
@@ -517,7 +517,7 @@ re_pair cf rs = eneeCheckIfDone $ \out -> runMating go finish ms0 out (QS makePQ
     -- Flush the in_order queue to messed_up, since those didn't find
     -- their mate the ordinary way.  Afterwards, flush the messed_up
     -- queue.
-    flush_in_order = fetchMin in_order' >>= \zz -> case zz of
+    flush_in_order = fetchMin in_order' >>= \case
         Just (ByMatePos b) -> no_mate_here "flush_in_order" b >> flush_in_order
         Nothing            -> flush_messed_up
 
@@ -602,7 +602,7 @@ mergeInputs = go0
 quick_pair :: Monad m => Enumeratee [BamRaw] [BamPair] m a
 quick_pair = eneeCheckIfDone go0
   where
-    go0 k = tryHead >>= maybe (return $ liftI k) (\x -> go1 x k)
+    go0 k = tryHead >>= maybe (return $ liftI k) (`go1` k)
 
     go1 x k | not (isPaired (unpackBam x)) = eneeCheckIfDone go0 . k $ Chunk [Singleton x]
             | otherwise                    = tryHead >>= maybe (return . k $ Chunk [LoneMate x]) (\y -> go2 x y k)

@@ -97,7 +97,7 @@ meld hdr score rs | all p_is_unmapped rs = head rs
                                      ++ show (map p_qname rs)
   where
     all_equal [] = error "no input (not supposed to happen)"
-    all_equal (x:xs) = all ((==) x) xs
+    all_equal (x:xs) = all (x ==) xs
 
     ( best : rs' ) = sortBy (\a b -> score a `compare` score b) $ filter (not . p_is_unmapped) rs
     mapq = case rs' of [    ] -> p_mapq best
@@ -167,7 +167,7 @@ set_sorted c = return $ c { c_merge = merge_by_name }
 set_weight :: String -> Conf -> IO Conf
 set_weight (a:b:':':rest) c = do
     w <- readIO rest
-    let f = \r -> getExt (fromString [a,b]) r * w + maybe 0 ($ r) (c_score c)
+    let f r = getExt (fromString [a,b]) r * w + maybe 0 ($ r) (c_score c)
     return $ c { c_score = Just f }
 set_weight s _ = error $ "illegal weight specification " ++ show s
 
@@ -190,8 +190,8 @@ main = do
         exitFailure
 
     add_pg <- addPG (Just version)
-    enum_bam_files (c_merge conf) files >=> run                             $ \hdr ->
-        joinI $ mapStream (meld hdr $ maybe defaultScore id $ c_score conf) $
+    enum_bam_files (c_merge conf) files >=> run                              $ \hdr ->
+        joinI $ mapStream (meld hdr $ fromMaybe defaultScore $ c_score conf) $
         joinI $ unpair $ c_output conf (add_pg hdr)
 
 

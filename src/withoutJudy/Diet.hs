@@ -10,7 +10,7 @@ module Diet (
 -- only for compatibility reasons.  Compare the version using Judy to
 -- make sense of this.
 
-import Bio.Prelude       hiding ( pi, loop, Word )
+import Bio.Prelude       hiding ( loop, Word )
 
 import qualified Data.IntMap as M
 import qualified Data.IntSet as S

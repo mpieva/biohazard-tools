@@ -222,14 +222,14 @@ viewMinPQ PQ{..} =
 
         Just (a, ss') -> case viewMin heap of
 
-            Just (b, h') | b <= a -> do
+            Just (b, h') | b <= a ->
                 Just (b, PQ h' (heap_size - usedBytes b) (pred sizePQ) spills)
 
             _ -> Just (a, PQ heap heap_size (pred sizePQ) ss')
 
         Nothing -> case viewMin heap of
 
-            Just (b ,h') -> do
+            Just (b ,h') ->
                 Just (b, PQ h' (heap_size - usedBytes b) (pred sizePQ) spills)
 
             Nothing -> Nothing
@@ -314,8 +314,8 @@ lz4 = L.foldrChunks go L.empty
   where
     go s | S.null s               = id
          | S.length s > lz4_csize = go (S.take lz4_csize s) . go (S.drop lz4_csize s)
-         | otherwise              = L.Chunk . unsafePerformIO $ do
-                S.createAndTrim lz4_bsize $ \pdest -> do
+         | otherwise              = L.Chunk . unsafePerformIO $
+                S.createAndTrim lz4_bsize $ \pdest ->
                     S.unsafeUseAsCStringLen s $ \(psrc,srcLen) -> do
                         dLen <- c_lz4 psrc (plusPtr pdest 4)
                                       (fromIntegral srcLen) (fromIntegral lz4_bsize)

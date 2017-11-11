@@ -51,7 +51,7 @@ main = getArgs >>= \args ->
                  $ protectTerm $ pipeBamOutput (add_pg hdr { meta_refs = seqs' })
 
 parseArgs :: Refs -> [String] -> ([(Refseq,(Int,Bytes))], Refs)
-parseArgs refs | Z.null refs = error $ "no target sequences found (empty input?)"
+parseArgs refs | Z.null refs = error "no target sequences found (empty input?)"
                | otherwise   = foldl parseArg ([],refs)
   where
     parseArg (sqs, h) arg = case break (==':') arg of

@@ -2,7 +2,7 @@ module Network where
 
 import Bio.Prelude                    hiding ( loop )
 import Control.Monad.IO.Class
-import Control.Monad.Trans.RWS.Strict hiding ( listen )
+import Control.Monad.Trans.RWS.Strict
 import Network.Socket
 
 import qualified Data.Binary.Get                    as B
@@ -53,7 +53,7 @@ data Response = UnknownAnno
     deriving Show
 
 putWord :: ( Bits a, Integral a ) => a -> B.Put
-putWord i | i < 0x80  = do B.putWord8 (fromIntegral i)
+putWord i | i < 0x80  =    B.putWord8 (fromIntegral i)
           | otherwise = do B.putWord8 $ (fromIntegral i .&. 0x7f) .|. 0x80
                            putWord $ i `shiftR` 7
 
@@ -68,39 +68,37 @@ getRequest :: B.Get Request
 getRequest = do key <- getWord
                 case key of
                     0 -> StartAnno <$> getString
-                    1 -> AddAnno <$> ( (,,,,) <$> getString
-                                              <*> getString
-                                              <*> fmap toEnum getWord
-                                              <*> getWord
-                                              <*> getWord )
+                    1 -> AddAnno <$> getRegion
                     2 -> return EndAnno
                     3 -> StartFile <$> getString
                     4 -> return EndStream
-                    _ -> Anno (toEnum (key - 5)) <$> ( (,,,,) <$> getString
-                                                              <*> getString
-                                                              <*> fmap toEnum getWord
-                                                              <*> getWord
-                                                              <*> getWord )
+                    _ -> Anno (toEnum (key - 5)) <$> getRegion
+
+getRegion :: B.Get Region
+getRegion = (,,,,) <$> getString
+                   <*> getString
+                   <*> fmap toEnum getWord
+                   <*> getWord
+                   <*> getWord
+
+putRegion :: Region -> B.Put
+putRegion (n,m,s,u,v) = do putString n
+                           putString m
+                           putWord $ fromEnum s
+                           putWord u
+                           putWord v
 
 putRequest :: Request -> B.Put
-putRequest (StartAnno name)      = do putWord (0::Int)
-                                      putString name
-putRequest (AddAnno (n,m,s,u,v)) = do putWord (1::Int)
-                                      putString n
-                                      putString m
-                                      putWord $ fromEnum s
-                                      putWord $ u
-                                      putWord $ v
-putRequest (EndAnno)             = do putWord (2::Int)
-putRequest (StartFile name)      = do putWord (3::Int)
-                                      putString name
-putRequest (EndStream)           = do putWord (4::Int)
-putRequest (Anno w (n,m,s,u,v))  = do putWord $ fromEnum w + 5
-                                      putString n
-                                      putString m
-                                      putWord $ fromEnum s
-                                      putWord $ u
-                                      putWord $ v
+putRequest (StartAnno name) = do putWord (0::Int)
+                                 putString name
+putRequest (AddAnno region) = do putWord (1::Int)
+                                 putRegion region
+putRequest  EndAnno         =    putWord (2::Int)
+putRequest (StartFile name) = do putWord (3::Int)
+                                 putString name
+putRequest  EndStream       =    putWord (4::Int)
+putRequest (Anno w region)  = do putWord $ fromEnum w + 5
+                                 putRegion region
 
 getResponse :: B.Get Response
 getResponse = do key <- getWord
@@ -121,8 +119,8 @@ getResponse = do key <- getWord
                                               return (Result n (Hits hs))
 
 putResponse :: Response -> B.Put
-putResponse (UnknownAnno) = putWord (0::Int)
-putResponse (KnownAnno)   = putWord (1::Int)
+putResponse  UnknownAnno  = putWord (0::Int)
+putResponse  KnownAnno    = putWord (1::Int)
 putResponse (Result n as) = do putWord (2::Int)
                                putString n
                                case as of NearMiss a d -> do putWord (if d >= 0 then 0 else 1 ::Int)
@@ -131,7 +129,7 @@ putResponse (Result n as) = do putWord (2::Int)
                                           Hits hs      -> do putWord (length hs + 2)
                                                              mapM_ putString hs
 putResponse (StartedFile nm) = putWord (3::Int) >> putString nm
-putResponse (EndedStream)    = putWord (4::Int)
+putResponse  EndedStream     = putWord (4::Int)
 
 
 getString :: B.Get Bytes

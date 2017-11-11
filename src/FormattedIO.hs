@@ -30,7 +30,8 @@ make_table hdl = mapStreamM_ format
                              hPutChar hdl '\n'
     format (n, NearMiss a d) = do S.hPut hdl n ; hPutChar hdl '\t'
                                   S.hPut hdl a ; hPutChar hdl '@'
-                                  hPutStrLn hdl (show d)
+                                  hPutStr hdl (show d)
+                                  hPutChar hdl '\n'
 
 make_summary :: a -> Iteratee [(t, AnnoSet)] IO (a, HashMap Bytes Int)
 make_summary f = (,) f <$> foldStream count_annos M.empty
@@ -107,7 +108,7 @@ readMyBam hdr = filterStream (not . isUnmapped) ><> mapStream xlate
 
 -- 'MonadIO' is needed to support gzip.
 readInput :: MonadIO m => Enumeratee Bytes [Region] m b
-readInput it = do
+readInput it =
     isBam >>= \case
         Just  d -> joinI $ d $ \h -> mapStream unpackBam =$ readMyBam h it      -- sort-of Bam
         Nothing -> do
@@ -119,7 +120,7 @@ readInput it = do
                        | otherwise    -> do
                          (l1,c1) <- iLookAhead $ (,) <$> takeWhileBS isPrinting <*> peekStreamBS
                          case trySam l1 of
-                            _ | c1 /= Just 10 && c1 /= Just 13 && c1 /= Nothing ->
+                            _ | isJust c1 && c1 /= Just 10 && c1 /= Just 13 ->
                                     error "this doesn't look like either Bed or Sam"
                             Right _   -> joinI $ decodeSam $ flip readMyBam it  -- headerless Sam
                             Left  e   -> (e::SomeException) `seq` readMyBed it  -- whatever, probably Bed
@@ -164,7 +165,7 @@ read5col mct = enumLinesBS ><> concatMapStream (maybe id (map . xlate_chrom) mct
   where go [   ]                   = []
         go (w:_) | S.head w == '#' = []
         go (gi:crm:s:e:strand)     = [(gi, crm, read_strand strand, ereadInt s, ereadInt e)]
-        go _ = error $ "too few fields in legacy annotation file"
+        go _ = error "too few fields in legacy annotation file"
 
 read_strand :: [Bytes] -> Senses
 read_strand [   ]                   = Both

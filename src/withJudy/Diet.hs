@@ -251,7 +251,7 @@ lookupLeft s (IDiet fpjl) = unsafeDupablePerformIO $
 
     let open  = pJudy1ToLazyAscList fpjl pj_r
         close = pJudy1ToLazyAscList fpjl pj_l
-    return ( i-s, [ w | w <- close `setminus` open ] )
+    return ( i-s, close `setminus` open )
 
 
 -- | Get the closest set of annotations to the right of an interval.  To
@@ -269,5 +269,5 @@ lookupRight e (IDiet fpjl) = unsafeDupablePerformIO $
 
     let open  = pJudy1ToLazyAscList fpjl pj1
         close = pJudy1ToLazyAscList fpjl pj2
-    return ( i-e+1, [ w | w <- close `setminus` open ] )
+    return ( i-e+1, close `setminus` open )
 

@@ -84,10 +84,10 @@ options = [
     Option "V"  ["version"]        (NoArg  (const vrsn))      "Display version number and exit" ]
 
   where
-    set_output "-" c =                    return $ c { output = Just $ \_ -> pipeBamOutput, putResult = hPutStr stderr }
-    set_output   f c =                    return $ c { output = Just $ \_ -> writeBamFile f }
+    set_output "-" c =                    return $ c { output = Just $ const pipeBamOutput, putResult = hPutStr stderr }
+    set_output   f c =                    return $ c { output = Just $ const (writeBamFile f) }
     set_lib_out  f c =                    return $ c { output = Just $       writeLibBamFiles f }
-    set_debug_out  c =                    return $ c { output = Just $ \_ -> pipeSamOutput, putResult = hPutStr stderr }
+    set_debug_out  c =                    return $ c { output = Just $ const pipeSamOutput, putResult = hPutStr stderr }
     set_qual     n c = readIO n >>= \q -> return $ c { collapse = cons_collapse' (Q q) }
     set_no_strand  c =                    return $ c { strand_preserved = False }
     set_verbose    c =                    return $ c { debug = hPutStr stderr }
@@ -114,7 +114,7 @@ options = [
                                  return $ c { which = Some (Refseq $ x-1) (Refseq $ y-1) }
                 _ -> fail $ "parse error in " ++ show a
 
-    add_circular a c = case break ((==) ':') a of
+    add_circular a c = case break (':' ==) a of
         (nm,':':r) -> case reads r of
             [(l,[])] | l > 0 -> return $ c { circulars = add_circular' (fromString nm) l (circulars c) }
             _ -> fail $ "couldn't parse length " ++ show r ++ " for " ++ show nm
@@ -422,7 +422,7 @@ mapSortAtGroups cf order m f = eneeCheckIfDonePass no_group
     cont_group _rn _arg _pq k (Just  e) = idone (liftI k) $ EOF (Just e)
     cont_group  rn  arg  pq k  Nothing  = tryHead >>= maybe flush_eof check1
       where
-        flush_eof  = enumPQ (const $ return                            ) (Refseq maxBound, maxBound) pq k
+        flush_eof  = enumPQ (const   return                            ) (Refseq maxBound, maxBound) pq k
         flush_go a = enumPQ (const $ eneeCheckIfDonePass (no_group_1 a)) (Refseq maxBound, maxBound) pq k
         check1 a | b_rname a == rn = do pq' <- liftIO . pushTo pq $ f arg a
                                         case order of

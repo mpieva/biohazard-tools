@@ -21,7 +21,7 @@
  - closed intervals, we'll follow that convention.  If that is
  - confusing, just don't use stupid home grown fole formats. -}
 
-import Bio.Prelude                    hiding ( Word, loop, bracket )
+import Bio.Prelude                    hiding ( Word, bracket )
 import Bio.Iteratee
 import Control.Concurrent.Async
 import Control.Monad.Catch                   ( bracket )
@@ -109,11 +109,11 @@ options =
 
 common_options :: [OptDescr (Options -> IO Options)]
 common_options =
-    [ Option "p"  ["port"] (ReqArg set_port "PORT") "listen on PORT or connect to PORT"
-    , Option "H"  ["host"] (ReqArg set_host "HOST") "connect to HOST"
-    , Option "q"  ["quiet"]       (NoArg set_quiet) "do not output progress reports"
-    , Option "h?" ["help","usage"]    (NoArg usage) "display this information"
-    , Option "V"  ["version"]          (NoArg vrsn) "display version number and exit" ]
+    [ Option "p"  ["port"]      (ReqArg set_port "PORT") "listen on PORT or connect to PORT"
+    , Option "H"  ["host"]      (ReqArg set_host "HOST") "connect to HOST"
+    , Option "q"  ["quiet"]            (NoArg set_quiet) "do not output progress reports"
+    , Option "h?" ["help","usage"] (NoArg $ const usage) "display this information"
+    , Option "V"  ["version"]               (NoArg vrsn) "display version number and exit" ]
   where
     set_port p opts = return $ opts { optPort     =          Just p }
     set_host h opts = return $ opts { optHost     =          Just h }
@@ -123,9 +123,10 @@ common_options =
                          hPutStrLn stderr $ pn ++ ", version " ++ showVersion version
                          exitSuccess
 
-    usage         _ = do pn <- getProgName
-                         putStrLn (usageInfo (header pn) $ options ++ common_options)
-                         exitSuccess
+usage :: IO a
+usage = do pn <- getProgName
+           putStrLn (usageInfo (header pn) $ options ++ common_options)
+           exitSuccess
 
 legacy_warning :: String
 legacy_warning = unlines [ "Warning: The five column format is not a standard format.  Consider"
@@ -141,16 +142,16 @@ type LookupFn = RevSymtab -> Int -> Int -> [IDiet] -> AnnoSet
 
 standardLookup :: (Int -> Int -> IDiet -> [Word]) -> LookupFn
 standardLookup which syms s e diets =
-    Hits . map (syms!) . map fromIntegral . unions $ map (which s e) diets
+    Hits . map ((!) syms . fromIntegral) . unions $ map (which s e) diets
 
 lookupNearest :: LookupFn
 lookupNearest syms s e diets =
     let overlaps = unions $ map (lookupI s e) diets
         closeby  = sort $ filter (not . null . snd) $ map (lookupLeft s) diets ++ map (lookupRight e) diets
     in case (overlaps, closeby) of
-        ([], [    ]) -> Hits []
-        ([], (as:_)) -> NearMiss (syms ! fromIntegral a) d where (d,(a:_)) = as
-        (is,      _) -> Hits . map (syms!) $ map fromIntegral is
+        ([], [  ]) -> Hits []
+        ([], as:_) -> NearMiss (syms ! fromIntegral a) d where (d,a:_) = as
+        (is,   _ ) -> Hits $ map ((!) syms . fromIntegral) is
 
 
 interpretWhich :: Which -> RevSymtab -> Int -> Int -> [IDiet] -> AnnoSet
@@ -163,9 +164,7 @@ interpretWhich Nearest   = lookupNearest
 main :: IO ()
 main = do
     args <- getArgs
-    when (null args) $ do pn <- getProgName
-                          putStrLn (usageInfo (header pn) $ options ++ common_options)
-                          exitSuccess
+    when (null args) usage
 
     let (os, files, errors) = getOpt Permute (options ++ common_options) args
     opts <- foldr (>=>) return os defaultOptions
@@ -317,7 +316,7 @@ serverfn pr fulltables (Nothing, fts) (StartAnno name) = do
                       return ( (Just (name, M.empty, M.empty), fts), Just UnknownAnno )
 
 serverfn _ _ st (StartFile nm) = return ( st, Just $ StartedFile nm )
-serverfn _ _ st (EndStream)    = return ( st, Just $ EndedStream )
+serverfn _ _ st  EndStream     = return ( st, Just   EndedStream )
 
 serverfn _ _ (Nothing,_) (AddAnno _) = fail "client tried growing an annotation set without opening it"
 serverfn _ _ (Just (name, annotab, symtab), st) (AddAnno (gi, chrom, strs, s, e)) =

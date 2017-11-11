@@ -166,7 +166,7 @@ enumDual f1 f2 = mergeEnums (fromFastq f1 $= mapStream one) (fromFastq f2) (conv
                         "read names do not match: " ++ shows (b_qname firstMate) " & " ++ show (b_qname secondMate)
 
                  let qc = (b_flag firstMate .|. b_flag secondMate) .&. flagFailsQC
-                     addx k = maybe id (updateE k) $ maybe (lookup k (b_exts secondMate)) Just $ lookup k (b_exts firstMate)
+                     addx k = maybe id (updateE k) $ lookup k (b_exts firstMate) <|> lookup k (b_exts secondMate)
                      add_indexes = addx "XI" . addx "XJ" . addx "YI" . addx "YJ"
 
                  return [ two (firstMate  { b_flag = qc .|.  flagFirstMate .|. flagPaired .|. b_flag firstMate .&. complement flagSecondMate
