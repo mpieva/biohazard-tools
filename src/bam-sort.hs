@@ -102,7 +102,7 @@ eneePQ pq0 it0 = tryHead >>= go pq0 it0
 isolate_sorted_part :: MonadIO m => Iteratee [BamRaw] m () -> Iteratee [BamRaw] m (PQ BySelfPos)
 isolate_sorted_part it0 = tryHead >>= ini
   where
-    ini  Nothing  = makePQ <$ lift (run it0)
+    ini  Nothing  = lift (run it0) >> return makePQ
     ini (Just br) = do it' <- lift $ enumPure1Chunk [br] it0
                        (itZ, pqZ, _) <- foldStreamM go (it', makePQ, br_self_pos br)
                        lift $ run itZ

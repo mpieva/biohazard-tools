@@ -7,13 +7,13 @@ Category:            Bioinformatics
 
 Homepage:            https://bitbucket.org/ustenzel/biohazard-tools
 License:             BSD3
-License-File:        LICENSE
+License-file:        LICENSE
 
 Author:              Udo Stenzel
 Maintainer:          udo.stenzel@eva.mpg.de
 Copyright:           (C) 2010-2017 Udo Stenzel
 
-Extra-Source-Files:  man/man1/bam-fixpair.1
+Extra-source-files:  man/man1/bam-fixpair.1
                      man/man1/bam-mangle.1
                      man/man1/bam-meld.1
                      man/man1/bam-rewrap.1
@@ -22,7 +22,7 @@ Extra-Source-Files:  man/man1/bam-fixpair.1
 
 Cabal-version:       >= 1.10
 Build-type:          Custom
-Tested-With:         GHC == 7.8.4, GHC == 7.10.1, GHC == 8.0.1
+Tested-with:         GHC == 7.8.4, GHC == 7.10.3, GHC == 8.0.2, GHC == 8.2.1
 
 source-repository head
   type:     git
