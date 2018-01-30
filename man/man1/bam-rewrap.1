@@ -17,9 +17,8 @@ The idea is that a circular reference sequence has been extended
 artificially to facilitate alignment.  Now the declared length in the
 header is wrong, and some alignments overhang the end. 
 .B bam-rewrap
-splits
-those alignments into two, one for the beginning, one for the end of
-the sequence, then soft-masks out the inappropriate parts.  Alignments
+splits those alignments into two, one for the beginning, one for the end
+of the sequence, then soft-masks the inappropriate parts.  Alignments
 falling completely behind the actual end of the target sequence are
 wrapped to natural coordinates.
 

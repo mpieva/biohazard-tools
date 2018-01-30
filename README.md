@@ -36,7 +36,6 @@ from Hackage.  To install, follow these steps:
    http://haskell.org/cabal),
 * run `cabal update` (takes a while to download the current package list),
 * run `cabal install
-  https://bitbucket.org/ustenzel/biohazard/get/master.tar.gz
   https://bitbucket.org/ustenzel/biohazard-tools/get/master.tar.gz`
   (takes even longer).
 

@@ -27,7 +27,7 @@ data Input = Input { _read1  :: FilePath         -- ^ file with first read (or o
                    ,  read2  :: Maybe FilePath   -- ^ optional file with second read
                    , index1  :: Maybe FilePath   -- ^ optional file with first index
                    , index2  :: Maybe FilePath   -- ^ optional file with second index
-                   , lindex1 :: Int }           -- ^ length of first index contained in first read
+                   , lindex1 :: Int }            -- ^ length of first index contained in first read
   deriving Show
 
 plainInput :: FilePath -> Input

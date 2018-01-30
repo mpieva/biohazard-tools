@@ -1,4 +1,4 @@
-{-# LANGUAGE RecordWildCards, CPP #-}
+{-# LANGUAGE RecordWildCards #-}
 -- Generic bam mangler.  Mostly filters, some mutating operations, some
 -- extraction of data.  Simple expression language, comparable to Unix
 -- 'find', but not to 'awk'.
@@ -232,9 +232,6 @@ isDeaminated n = gets $ \br ->
                     V.any (== cg) (V.drop (l-n) aln) ||
                     V.any (== ga) (V.drop (l-n) aln)
           where
-#if !MIN_VERSION_biohazard(0,6,17)
-            npair = (,)
-#endif
             l  = V.length aln
             cg = npair nucsC nucsT
             ga = npair nucsG nucsA  }

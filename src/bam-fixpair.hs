@@ -289,7 +289,7 @@ divorce b = b { b_flag = b_flag b .&. complement pair_flags
                  flagFirstMate .|. flagSecondMate .|.
                  flagMateUnmapped .|. flagMateReversed
 
--- I think this can work with priority queues alone:
+-- The mating algorithm works with priority queues alone:
 --
 -- - One contains incomplete pairs ordered by mate position.  When we
 --   reach a given position and find the 2nd mate, the minimum in this
@@ -578,7 +578,7 @@ re_pair cf rs = eneeCheckIfDone $ \out -> runMating go finish ms0 out (QS makePQ
 -- the priority queues never fill up and we save a ton of processing.
 -- Now to make the re-pair algorithm work well, we need to merge-sort
 -- inputs.  But after that, the pairs have been separated.  So we apply
--- the preprocessing to each input file, then merge then, then run
+-- the preprocessing to each input file, then merge them, then run
 -- re-pair.
 
 data BamPair = Singleton BamRaw | Pair BamRaw BamRaw | LoneMate BamRaw

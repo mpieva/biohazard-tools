@@ -81,19 +81,20 @@ Specify that the reference sequence starting with the string
 is circular and has length 
 .IR LEN .
 
-The effect is that reads that align to one or more position that is
-duplicated in the reference are normalized to a small start coordinate
-and have their mapping quality (MAPQ) fixed where possible.  After removal of
-duplicates, reads that overhang the end of the reference sequence are
-duplicated to the beginning and invalid parts of the alignment are
-masked.  The correct length is also entered in the BAM header.
-
 Assuming that reads were mapped to a reference that has a part from the
-beginning pasted to its end, a subsequent genotype caller should now see
-even coverage over the whole length of the reference.  At the same time,
-duplicate removal and complexity estimation should still work fine.
-(Arguably, this is all way too complicated, but simple solutions seem
-unattainable within the constraints of the BAM file format.)
+beginning pasted to its end, the effect is that reads that align to one
+or more position that is duplicated in the reference are normalized to a
+canonical start coordinate and have their mapping quality (MAPQ) fixed
+where possible.  After removal of duplicates, reads that overhang the
+end of the reference sequence are duplicated to the beginning and
+overhanging parts of the alignment are soft-masked.  The correct length
+is also entered in the BAM header.
+
+A subsequent genotype caller should now see even coverage over the whole
+length of the reference.  At the same time, duplicate removal and
+complexity estimation should still work fine.  (Arguably, this is all
+way too complicated, but simple solutions seem unattainable within the
+constraints of the BAM file format.)
 
 .IP "-p, --improper-pairs"
 Retain improper pairs, that is, mate-pairs of which only one mate is

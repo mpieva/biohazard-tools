@@ -8,25 +8,25 @@
 -- Since this is not generally useful, we only compile this as a test
 -- suite and don't bother installing it.
 --
--- XXX  One way this could be useful is if it provided a sort that was
---      efficient when applied to the "almost sorted" output of
---      bam-fixpair (or a similar program, or its postprocessed output).
---      The idea would be to copy everything to a temporary file that
---      follows the sort order.  Those records that don't fit the normal
---      order go to a PriorityQueue; at the end, we unfold the
---      PriorityQueue and merge with the temporary stream.  If this
---      avoids most of the merging work (and keeps the number of streams
---      to be read from low), it should be faster than a general sort.
---      It still reverts to the general sort if the input is unsorted.
+-- One way this could become useful is if it provided a sort that was
+-- efficient when applied to the \"almost sorted\" output of bam-fixpair
+-- (or a similar program, or its postprocessed output).  The idea would
+-- be to copy everything to a temporary file that follows the sort
+-- order.  Those records that don't fit the normal order go to a
+-- 'PriorityQueue'; at the end, we unfold the 'PriorityQueue' and merge
+-- with the temporary stream.  If this avoids most of the merging work
+-- (and keeps the number of streams to be read from low), it should be
+-- faster than a general sort.  It still reverts to the general sort if
+-- the input is unsorted.
 --
---      In a quick test, this opportunistic sort is almost twice as fast
---      as the general version on the output of bam-fixpair (with few
---      actual paired-end reads).  Is that worth it?
+-- In a quick test, this opportunistic sort is almost twice as fast as
+-- the general version on the output of bam-fixpair (with few actual
+-- paired-end reads).  Is that worth it?
 --
---      The opportunistic sort could also buffer a fixed amount of reads
---      in memory, perhaps using a separate 'SkewHeap', and only begin
---      to stream out once memory gets tight.  That way, reads that need
---      to be moved back only a little bit don't need to hit the disk.
+-- The opportunistic sort could also buffer a fixed amount of reads in
+-- memory, perhaps using a separate 'SkewHeap', and only begin to stream
+-- out once memory gets tight.  That way, reads that need to be moved
+-- back only a little bit don't need to hit the disk.
 
 import Bio.Prelude
 import Bio.Bam
