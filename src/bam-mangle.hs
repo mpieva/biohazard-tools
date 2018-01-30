@@ -2,7 +2,7 @@
 -- extraction of data.  Simple expression language, comparable to Unix
 -- 'find', but not to 'awk'.
 
-import Bio.Adna                                 ( alnFromMd )
+import Bio.Adna
 import Bio.Bam                           hiding ( ParseError )
 import Bio.Prelude                       hiding ( try, many )
 import Control.Monad.Trans.RWS.Strict
@@ -52,8 +52,8 @@ options = [
                       hPutStrLn stderr $ "Usage: " ++ usageInfo (p ++ info) options
                       exitSuccess
 
-    info = " [option...] [bam-file...]\n\
-           \Filters a set of BAM files by applying an expression to each record.  Options are:"
+    info = " [option...] [bam-file...]\n" ++
+           "Filters a set of BAM files by applying an expression to each record.  Options are:"
 
     set_sum e c = case parse_str p_num_atom e of
         Left   err  -> hPrint stderr err >> exitFailure
@@ -232,8 +232,8 @@ isDeaminated n = gets $ \br ->
                     V.any (== ga) (V.drop (l-n) aln)
           where
             l  = V.length aln
-            cg = ( nucsC, nucsT )
-            ga = ( nucsG, nucsA ) }
+            cg = npair nucsC nucsT
+            ga = npair nucsG nucsA  }
 
 
 -- | Numeric-valued atoms (float or int, everything is converted to

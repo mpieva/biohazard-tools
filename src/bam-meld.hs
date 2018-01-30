@@ -7,7 +7,7 @@
 -- Paired end support is easy:  since all input files are either
 -- unsorted (and strictly parallel) or sorted by read name, pairs are
 -- also sorted together.  So all we have to do is (maybe) exchange first
--- and seocnd mate.
+-- and second mate.
 
 import Bio.Bam
 import Bio.Prelude

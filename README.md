@@ -42,7 +42,6 @@ from Hackage.  To install, follow these steps:
 * install Judy, either from http://judy.sourceforge.net, or through your
   package manager (it's named `libjudy-dev` or similar),
 * run `cabal install
-  https://bitbucket.org/ustenzel/biohazard/get/master.tar.gz
   https://bitbucket.org/ustenzel/biohazard-tools/get/master.tar.gz`
   (takes even longer).
 * If you don't have or don't like Judy, you can install without it by

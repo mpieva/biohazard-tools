@@ -7,13 +7,13 @@ Category:            Bioinformatics
 
 Homepage:            https://bitbucket.org/ustenzel/biohazard-tools
 License:             BSD3
-License-File:        LICENSE
+License-file:        LICENSE
 
 Author:              Udo Stenzel
 Maintainer:          u.stenzel@web.de
 Copyright:           (C) 2010-2017 Udo Stenzel
 
-Extra-Source-Files:  man/man1/bam-fixpair.1
+Extra-source-files:  man/man1/bam-fixpair.1
                      man/man1/bam-mangle.1
                      man/man1/bam-meld.1
                      man/man1/bam-rewrap.1
@@ -23,7 +23,7 @@ Extra-Source-Files:  man/man1/bam-fixpair.1
 
 Cabal-version:       >= 1.10
 Build-type:          Custom
-Tested-With:         GHC == 7.8.4, GHC == 7.10.1, GHC == 8.0.1
+Tested-with:         GHC == 7.8.4, GHC == 7.10.3, GHC == 8.0.2, GHC == 8.2.1
 
 source-repository head
   type:     git
@@ -49,7 +49,7 @@ Test-suite bam-sort
   C-sources:           cbits/lz4.c
   Build-depends:       base                     >= 4.6 && < 4.11,
                        binary                   >= 0.8.3 && < 0.9,
-                       biohazard                >= 0.6.15 && < 0.7,
+                       biohazard                == 1.0.*,
                        bytestring               >= 0.10.2 && < 0.11,
                        unix                     >= 2.5 && < 2.8
 
@@ -67,7 +67,7 @@ Executable bam-fixpair
   Build-depends:       async                    >= 2.0 && < 2.2,
                        base                     >= 4.6 && < 4.11,
                        binary                   >= 0.8.3 && < 0.9,
-                       biohazard                >= 0.6.15 && < 0.7,
+                       biohazard                == 1.0.*,
                        bytestring               >= 0.10.2 && < 0.11,
                        process                  >= 1.0 && < 1.7,
                        stm                      == 2.4.*,
@@ -82,7 +82,7 @@ Executable bam-mangle
   Hs-Source-Dirs:      src
   Other-modules:       Paths_biohazard_tools
   Build-depends:       base                     >= 4.6 && < 4.11,
-                       biohazard                >= 0.6.15 && < 0.7,
+                       biohazard                == 1.0.*,
                        bytestring               >= 0.10.2 && < 0.11,
                        parsec                   == 3.*,
                        random                   >= 1.0 && < 1.2,
@@ -100,7 +100,7 @@ Executable bam-meld
   Hs-Source-Dirs:      src
   Other-modules:       Paths_biohazard_tools
   Build-depends:       base                     >= 4.6 && < 4.11,
-                       biohazard                >= 0.6.15 && < 0.7,
+                       biohazard                == 1.0.*,
                        bytestring               >= 0.10.2 && < 0.11,
                        containers               >= 0.4.1 && < 0.6
 
@@ -112,7 +112,7 @@ Executable bam-resample
   Hs-Source-Dirs:      src
   Other-modules:       Paths_biohazard_tools
   Build-depends:       base                     >= 4.6 && < 4.11,
-                       biohazard                >= 0.6.15 && < 0.7,
+                       biohazard                == 1.0.*,
                        bytestring               >= 0.10.2 && < 0.11,
                        random                   >= 1.0 && < 1.2
 
@@ -124,7 +124,7 @@ Executable bam-rewrap
   Hs-Source-Dirs:      src
   Other-modules:       Paths_biohazard_tools
   Build-depends:       base                     >= 4.6 && < 4.11,
-                       biohazard                >= 0.6.15 && < 0.7,
+                       biohazard                == 1.0.*,
                        bytestring               >= 0.10.2 && < 0.11,
                        containers               >= 0.4.1 && < 0.6
 
@@ -140,7 +140,7 @@ Executable bam-rmdup
   C-sources:           cbits/lz4.c
   Build-depends:       base                     >= 4.6 && < 4.11,
                        binary                   >= 0.8.3 && < 0.9,
-                       biohazard                >= 0.6.15 && < 0.7,
+                       biohazard                == 1.0.*,
                        bytestring               >= 0.10.2 && < 0.11,
                        containers               >= 0.4.1 && < 0.6,
                        unordered-containers     >= 0.2.3 && < 0.3,
@@ -154,7 +154,7 @@ Executable bam-trim
   Hs-Source-Dirs:      src
   Other-modules:       Paths_biohazard_tools
   Build-depends:       base                     >= 4.6 && < 4.11,
-                       biohazard                >= 0.6.15 && < 0.7,
+                       biohazard                == 1.0.*,
                        bytestring               >= 0.10.2 && < 0.11
 
 Executable expound
@@ -194,7 +194,7 @@ Executable fastq2bam
   Hs-Source-Dirs:      src
   Other-modules:       Paths_biohazard_tools
   Build-depends:       base                     >= 4.6 && < 4.11,
-                       biohazard                >= 0.6.15 && < 0.7,
+                       biohazard                == 1.0.*,
                        bytestring               >= 0.10.2 && < 0.11,
                        containers               >= 0.4.1 && < 0.6,
                        vector                   >= 0.11 && < 0.13

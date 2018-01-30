@@ -10,14 +10,14 @@ fastq2bam \- convert fastq files to bam
 .B ... ]
 .SH DESCRIPTION
 .B fastq2bam
-takes FastQ or FastA files as input and converts them to BAM, honoring
-various common conventions.  Paired end and singly or doubly indexed
-reads are supported in most encodings encountered in the wild.
+converts FastQ or FastA files to BAM, honoring various common
+conventions.  Paired end and singly or doubly indexed reads are
+supported in most encodings encountered in the wild.
 
-Most syntactic conventions employed in FastQ are recognized, see below.
-Multiple files can be given as input, they are combined sensibly and
-finally concatenated.  Bare file arguments behave the same as if they
-were given with the 
+Most syntactic conventions employed as extensions to FastQ are
+recognized, see below.  Multiple files can be given as input, they are
+combined sensibly and finally concatenated.  Bare file arguments behave
+the same as if they were given with the
 .I --read-one
 option.
 
@@ -46,7 +46,7 @@ paired up with one from the source previously given with
 .I --read-one
 (or stdin if no
 .I --read-one
-was encountered), and the pair is appropriately flagged a 1st mate and
+was encountered), and the pair is appropriately flagged as 1st mate and
 2nd mate.
 
 .IP "-I, --index-one file"
@@ -93,39 +93,39 @@ associated with the sequences, but nothing else changes.  Many
 annotations in the header are recognized:
 
 .IP \(bu 4 
-A name suffix of "/1" or "/2" is turned into the first mate or second
-mate flag, respectively (Illumina convention).
+A name suffix of \(lq/1\(rq or \(lq/2\(rq is turned into the first mate
+or second mate flag, respectively (Illumina convention).
 
 .IP \(bu 4
-The name prefixes "F_" and "R_" are turned into the first mate or
-second mate flag, respectively (legacy MPI EVAN convention).
+The name prefixes \(lqF_\(rq and \(lqR_\(rq are turned into the first
+mate or second mate flag, respectively (legacy MPI EVAN convention).
 
 .IP \(bu 4
-The name prefix "M_" flags the sequence as unpaired and merged (legacy
-MPI EVAN convention).
+The name prefix \(lqM_\(rq flags the sequence as unpaired and merged
+(legacy MPI EVAN convention).
 
 .IP \(bu 4 
-The name prefix "T_" flags the sequence as unpaired and trimmed
+The name prefix \(lqT_\(rq flags the sequence as unpaired and trimmed
 (legacy MPI EVAN convention).
 
 .IP \(bu 4
-The name prefix of "C_", either before or after any of the other
+The name prefix of \(lqC_\(rq, either before or after any of the other
 prefixes, is turned into the extra flag 
 .IR XP:i:-1 ,
 meaning the result of duplicate removal with unknown duplicate count
 (legacy MPI EVAN convention, I'm really sorry for this one).
 
 .IP \(bu 4
-A nucleotide sequence separated from the name by an octothorpe ("#") is
-removed and treated as the first index.  Two such sequences, separated
-by a comma, are treated as first and second index (legacy convention,
-possibly MPI EVAN only).
+A nucleotide sequence separated from the name by an octothorpe
+(\(lq#\(rq) is removed and treated as the first index.  Two such
+sequences, separated by a comma, are treated as first and second index
+(legacy convention, possibly MPI EVAN only).
 
 .IP \(bu 4
 If the first word of the description has at least four colon separated
 subfields, the first is used to flag first/second mate if it has the
 value 
-.IR 1 or 2 ,
+.IR 1 " or " 2 ,
 respectively, the second is interpreted as the "QC failed" flag if it
 has the value
 .IR Y ,
@@ -133,7 +133,7 @@ has the value
 
 If multiple files are read and combined, later files override the
 appropriate values parsed from earlier files.  This makes it possible
-to, e.g. have one file containing the first mates with their index
+to, for example, have one file containing the first mates with their index
 sequences, another with the second mates with their index sequences, and
 a third file that supplies the second index sequence only.
 
@@ -147,19 +147,14 @@ field with string type, its quality score into the
 .I YI
 field with string type, encoded just like in FastQ files.
 Likewise, the second index goes into
-.IR XJ and YJ .
+.IR XJ " and " YJ .
 If a read is recognized as being a replacement for a cluster of
 duplicates, this is encoded by setting
 .I XP
 to
 .I -1 
-with integer type.  If a read is to be flagged as trimmed, the 
-.I FF
-field is set to
-.I 1
-, or to 
-.I 2
-if the read resulted from merging of a read pair (MPI EVAN convention).
+with integer type.
+
 
 .SH NOTES
 
@@ -188,21 +183,38 @@ Merging of read pairs and trimming of single reads are considered
 effectively the same.  Only few adapters occur in the wild, and we try
 to trim any combination of these:
 .IR "Genomic-R1" ", " "Genomic-R2" ", " "CL72" ", " "Multiplex-R2" ", " "Graft-P7" "."
-Merging computes two qualities and stores them in
-the bam record:  "YM" (that's Merge quality) is the odds that the merge
-is wrong, "YN" (that's aNother merge quality) is the odds that any
-possible merge is wrong, both are encoded on the Phred scale.
+(These are standard adapters on the Illumina platform on either
+single-ended or paired-end flow cells; CL72 is the ancient DNA adapter
+at MPI EVAN.)
 
-If YM is too low (less than 20, configurable with --merge-qual), nothing
-is merged and the original read pair is retained.  If YM is very high
-(higher that 200, configurable with --merge-overlap), the original pair
-is discarded.  (At this quality, the program isn't expected to make a
-single mistake in a lifetime of sequecing.)  Otherwise, the read is
-merged and the original pair is retained.
+Merging computes two qualities and stores them in the bam record:
+\(lqYM\(rq (that's \fBM\fRerge quality) is the odds that the chosen
+merge is wrong, \(lqYN\(rq (that's a\fBN\fRother merge quality) is the
+odds that any possible merge is wrong, both are encoded in deciban (also
+known as the Phred scale).
 
-Modifications are logged in the "FF" field (that's Freaking Flags):  The
-value is 1 for a trimmed read, 3 for a merged read, and 4 for the
-original of a read that is also present in a merged or trimmed version.
+If \(lqYM\(rq is too low (less than 20, configurable with
+.IR --merge-qual ),
+nothing is merged and the original read pair is retained.  If \(lqYM\(rq
+is very high (higher that 200, configurable with 
+.IR --merge-overlap ), 
+the original pair is discarded.  (At this quality, the program is
+expected to make less than a single mistake in a lifetime of sequecing.)
+Otherwise, the read is merged and the original pair is retained in
+addition.
+
+Modifications are logged in the \(lqFF\(rq field (that's \fBF\fRreaking
+\fBF\fRlags):  The value is
+.I 1 
+for a trimmed read, 
+.I 2
+for a merged read, 
+.I 3
+for a merged read that is also trimmed,
+and 
+.I 4
+for the original of a read that is also present in a merged or trimmed
+version (all MPI EVAN convention).
 
 .SH AUTHOR
 Udo Stenzel <udo_stenzel@eva.mpg.de>

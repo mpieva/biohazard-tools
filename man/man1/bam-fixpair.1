@@ -3,7 +3,7 @@
 .\"
 .TH BAM-FIXPAIR 1 "OCTOBER 2016" Applications "User Manuals"
 .SH NAME
-bam-fixpair \- bring read pairs together an repair them
+bam-fixpair \- bring read pairs together and repair them
 .SH SYNOPSIS
 
 .B bam-fixpair [
@@ -22,7 +22,8 @@ bam-fixpair \- bring read pairs together an repair them
 .B bam-fixpair
 reads one or more BAM files, brings the paired end reads together, fixes
 any flags as needed, and writes the result out in BAM format again or
-pipes(!) it into another program that expects two(!) FastQ files as input.
+pipes(!) it into another program that expects two(!) or three(!) FastQ
+files as input.
 
 .B bam-fixpair
 should work with any input, but it performs best on sorted BAM input
@@ -56,7 +57,7 @@ yields the unpaired reads.  To avoid leaking memory, the executed
 program should read from all these file descriptors in an interleaved
 fashion.  When done,
 .B bam-fixpair
-exists with the exit code of the external program. 
+exits with the exit code of the external program. 
 
 .IP "-n, --dry-run, --validate"
 Turns off output.  Any errors or inconsistencies found by
@@ -130,19 +131,14 @@ Trim the longest suffix off each read that has an average quality below
 .IR QUAL .
 If that causes a read to vanish, it is removed and leaves a widow, which
 is then either flagged correctly or killed, depending on the setting
-mentioned above.  This option is a bad idea, don't use it.
+mentioned above.
+.B This option is a bad idea, don't use it.
 
 .IP "-h, -?, --help, --usage"
 Prints a short usage information and exit.
 
 .IP "-V, --version"
 Prints the version number and exits.
-
-.SH BUGS
-For large and badly messed up inputs, 
-.B bam-fixpair
-will run out of memory.  A possible fix would be to buffer in external
-memory, and that is planned, but hasn't been done.
 
 .SH AUTHOR
 Udo Stenzel <udo_stenzel@eva.mpg.de>

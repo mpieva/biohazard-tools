@@ -31,12 +31,12 @@ import Foreign.C.String                 ( withCAString )
 import Foreign.C.Types                  ( CChar(..), CInt(..), CSize(..) )
 import System.IO                        ( SeekMode(RelativeSeek) )
 
-import qualified Data.ByteString                as S
+import qualified Data.ByteString                  as S
 import qualified Data.ByteString.Builder.Internal as B
-import qualified Data.ByteString.Internal       as S ( createAndTrim )
-import qualified Data.ByteString.Unsafe         as S ( unsafeUseAsCStringLen )
-import qualified Data.ByteString.Lazy           as L
-import qualified Data.ByteString.Lazy.Internal  as L ( ByteString(..) )
+import qualified Data.ByteString.Internal         as S ( createAndTrim )
+import qualified Data.ByteString.Unsafe           as S ( unsafeUseAsCStringLen )
+import qualified Data.ByteString.Lazy             as L
+import qualified Data.ByteString.Lazy.Internal    as L ( ByteString(..) )
 
 -- | A Priority Queue that can fall back to external storage.
 --
@@ -64,14 +64,13 @@ import qualified Data.ByteString.Lazy.Internal  as L ( ByteString(..) )
 -- use pread(2) on that as appropriate.  This way, we need only one file
 -- descriptor per generation.
 --
--- XXX  A generic way to decide when too many streams are open or how
---      much memory we can afford to use would be nice.  That first
---      condition is reached when seeking takes about as much time as
---      reading (which depends on buffer size and system
---      characteristics), so that an additional merge pass becomes
---      economical.  The second condition not only depends on how much
---      memory we have, but also on how much we will use for the merging
---      logic.  Right now, both are just a parameter.
+-- A generic way to decide when too many streams are open or how much
+-- memory we can afford to use would be nice.  That first condition is
+-- reached when seeking takes about as much time as reading (which
+-- depends on buffer size and system characteristics), so that an
+-- additional merge pass becomes economical.  The second condition not
+-- only depends on how much memory we have, but also on how much we will
+-- use for the merging logic.  Right now, both are just a parameter.
 
 data PQ_Conf = PQ_Conf {
         max_mb :: Int,          -- ^ memory limit
