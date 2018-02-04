@@ -118,7 +118,7 @@ readInput it =
                 Just c | c == c2w '>' -> readMyFasta it                         -- Fasta?
                        | c == c2w '@' -> joinI $ decodeSam $ flip readMyBam it  -- probably Sam
                        | otherwise    -> do
-                         (l1,c1) <- iLookAhead $ (,) <$> takeWhileBS isPrinting <*> peekStreamBS
+                         (l1,c1) <- iLookAhead $ liftM2 (,) (takeWhileBS isPrinting) peekStreamBS
                          case trySam l1 of
                             _ | isJust c1 && c1 /= Just 10 && c1 /= Just 13 ->
                                     error "this doesn't look like either Bed or Sam"

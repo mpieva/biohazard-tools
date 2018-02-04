@@ -8,11 +8,8 @@ module Diet (
 
 import Bio.Prelude       hiding ( pi, Word, loop )
 import Foreign.C.Types          ( CULong(..), CInt(..) )
-import Foreign.ForeignPtr       ( newForeignPtr, withForeignPtr, ForeignPtr )
 import Foreign.Marshal.Alloc    ( malloc )
 import Foreign.Marshal.Utils    ( with )
-import Foreign.Ptr              ( Ptr, FunPtr, nullPtr )
-import Foreign.Storable         ( peek, poke )
 
 -- | "Discrete Interval Encoding Tree:"
 -- Stores a mapping from Int to a set of Ints.  Consecutive intervals
