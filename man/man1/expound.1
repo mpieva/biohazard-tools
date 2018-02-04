@@ -9,8 +9,8 @@ expound \- annotates genomic regions
 .BI "" region_file " ..."
 
 .SH DESCRIPTION
-.B expound
-reads one or more tables that maps genomic regions to annotations, then
+.BR expound " (formerly known as " coord2anno )
+reads one or more tables that map genomic regions to annotations, then
 reads one or more files containing regions, and annotates those regions.
 Region files can be
 .SM SAM, BAM,
@@ -116,9 +116,10 @@ mark ('#') and track definition lines (those starting with the word
 "track") are ignored.
 
 .B expound
-also understands an ad-hoc five column format.  This was a bad idea and
-these files should be phased out.  Therefore, they will not be
-documented here.  If you were smart enough to make five column tables,
+also understands an ad-hoc five column format.  This 
+.I was a bad idea
+and these files should be phased out.  Therefore, they will not be
+documented here.  If you are smart enough to make five column tables,
 you are smart enough to turn them into
 .SM BED
 files even without documentation, so please do that.  In the meantime,
@@ -157,7 +158,7 @@ uncompressed
 .SM BAM
 files are recognized from their header.  If a file starts with a '>', it
 is interpreted as
-.SM FASTA.
+.SM FastA.
 If a file starts with an '@', or if the first line has 11 or more fields
 and field 5 can be interpreted as a
 .SM CIGAR
@@ -176,9 +177,9 @@ enough to convert it to
 You are encouraged to do so.
 
 
-.SS "FASTA File With Regions"
+.SS "FastA File With Regions"
 If a region file begins with '>', it is interpreted as a 
-.SM FASTA
+.SM FastA
 file where the sequence identifiers contain region information.  All
 identifiers must contain at least four fields separated by colons (':').
 These fields are:
@@ -191,14 +192,18 @@ start position
 .IP \[bu] 2
 end position
 
+Abusing 
+.SM FastA
+in this way
+.IR "is a terrible idea" .
+If you have such files, you should convert them to 
+.SM BAM.
+
 .SS "Output Table"
-The output table a text file with one entry per line and two
-whitespace separated columns.  The first line starts with '#' and
-contains a descriptive header.  The first column contains the region's
-id, which is the complete sequence identifier if input came from
-.SM FASTA
-or the contents of the first column if input came from a table, the
-second column contains all annotations, separated by colons (':').
+The output table a text file with one entry per line and two whitespace
+separated columns.  The first line starts with '#' and contains a
+descriptive header.  The first column contains the region's identifier,
+the second column contains all annotations, separated by colons (':').
 Regions with no annotation at all are suppressed from the output.
 
 
@@ -290,8 +295,7 @@ Note that annotations fully \fIcontained\fR in a region can be reported.
 
 The output file format is ad-hoc.  A future version of
 .B expound
-will probably drop support for custom tables and swap in a standard
-format.
+may well drop support for custom tables and swap in a standard format.
 
 Handling of regions with
 .I start

@@ -21,7 +21,7 @@ involving BAM files for Next Generation Sequencing data:
 * `bam-rmdup`: removes PCR duplicates from BAM files and computes a
   consensus sequence for each cluster of replicates.
 
-* `expound`: annotates regions, similar to what `bedtools` does.
+* `expound`: annotates regions, similar to what `bedtools` does, but
   `expound` has a neat client/server mode so it doesn't have to read the
   same annotation file over and over again.
 
@@ -59,18 +59,3 @@ in a thoroughly unusable state of the Cabal package collection.  If you get erro
 messages that just don't make sense anymore, please refer to 
 http://www.vex.net/~trebla/haskell/sicp.xhtml; among other useful things, it 
 tells you how to wipe a package database without causing further destruction.
-
-
-Expound
-=======
-
-This is a reimagination of old code.  We modernize the code, use a
-broadcast protocol to find the server, and thereby make C/S mode
-completely transparent, implicit and optional.  Once it runs, it's
-integrated into bam-mangle to make it more flexible.  But for now, the
-code is barely kept alive.
-
-To do:
-
-* add the broadcast discovery
-* integrate with `bam-mangle`
